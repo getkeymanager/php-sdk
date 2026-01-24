@@ -8,8 +8,8 @@
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-use LicenseManager\SDK\LicenseClient;
-use LicenseManager\SDK\LicenseException;
+use GetKeyManager\SDK\LicenseClient;
+use GetKeyManager\SDK\LicenseException;
 
 // Initialize client
 $client = new LicenseClient([

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace LicenseManager\SDK\Tests;
+namespace GetKeyManager\SDK\Tests;
 
 use PHPUnit\Framework\TestCase;
-use LicenseManager\SDK\LicenseClient;
+use GetKeyManager\SDK\LicenseClient;
 
 /**
  * Test cases for LicenseClient

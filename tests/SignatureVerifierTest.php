@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace LicenseManager\SDK\Tests;
+namespace GetKeyManager\SDK\Tests;
 
 use PHPUnit\Framework\TestCase;
-use LicenseManager\SDK\SignatureVerifier;
+use GetKeyManager\SDK\SignatureVerifier;
 
 /**
  * Test cases for SignatureVerifier

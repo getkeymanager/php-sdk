@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace LicenseManager\SDK;
+namespace GetKeyManager\SDK;
 
 use Exception;
 use RuntimeException;
@@ -13,7 +13,7 @@ use InvalidArgumentException;
  * 
  * Official PHP client for license validation, activation, and management.
  * 
- * @package LicenseManager\SDK
+ * @package GetKeyManager\SDK
  * @version 2.0.0
  * @license MIT
  */
@@ -1473,7 +1473,7 @@ class LicenseClient
         
         $headers = [
             'Accept: application/json',
-            'User-Agent: LicenseManager-PHP-SDK/' . self::VERSION
+            'User-Agent: GetKeyManager-PHP-SDK/' . self::VERSION
         ];
 
         $ch = curl_init($url);
@@ -1553,7 +1553,7 @@ class LicenseClient
             'X-API-Key: ' . $this->apiKey,
             'Content-Type: application/json',
             'Accept: application/json',
-            'User-Agent: LicenseManager-PHP-SDK/' . self::VERSION
+            'User-Agent: GetKeyManager-PHP-SDK/' . self::VERSION
         ], array_map(function($k, $v) { return "$k: $v"; }, array_keys($extraHeaders), $extraHeaders));
 
         $attempt = 0;

@@ -60,7 +60,7 @@ require_once __DIR__ . '/vendor/autoload.php';
 ### Initialize the Client
 
 ```php
-use LicenseManager\SDK\LicenseClient;
+use GetKeyManager\SDK\LicenseClient;
 
 $client = new LicenseClient([
     'apiKey' => 'your-api-key-here',
@@ -151,7 +151,7 @@ try {
 ### Validate Offline License
 
 ```php
-use LicenseManager\SDK\LicenseClient;
+use GetKeyManager\SDK\LicenseClient;
 
 $client = new LicenseClient([
     'apiKey' => 'your-api-key',
@@ -240,10 +240,10 @@ LicenseException (base)
 ### Example Error Handling
 
 ```php
-use LicenseManager\SDK\LicenseClient;
-use LicenseManager\SDK\ExpiredException;
-use LicenseManager\SDK\RateLimitException;
-use LicenseManager\SDK\NetworkException;
+use GetKeyManager\SDK\LicenseClient;
+use GetKeyManager\SDK\ExpiredException;
+use GetKeyManager\SDK\RateLimitException;
+use GetKeyManager\SDK\NetworkException;
 
 try {
     $result = $client->validateLicense($licenseKey);
@@ -281,7 +281,7 @@ All API responses are cryptographically signed. The SDK automatically verifies s
 ### Using SignatureVerifier Directly
 
 ```php
-use LicenseManager\SDK\SignatureVerifier;
+use GetKeyManager\SDK\SignatureVerifier;
 
 $verifier = new SignatureVerifier($publicKeyPem);
 

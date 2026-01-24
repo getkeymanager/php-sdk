@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace LicenseManager\SDK;
+namespace GetKeyManager\SDK;
 
 use Exception;
 use InvalidArgumentException;
@@ -13,7 +13,7 @@ use RuntimeException;
  * 
  * Cryptographically verifies response signatures from the License Management Platform.
  * 
- * @package LicenseManager\SDK
+ * @package GetKeyManager\SDK
  * @version 1.0.0
  * @license MIT
  */

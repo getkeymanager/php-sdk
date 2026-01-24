@@ -609,8 +609,8 @@ All methods can throw the following exceptions:
 
 **Example:**
 ```php
-use LicenseManager\SDK\LicenseException;
-use LicenseManager\SDK\ValidationException;
+use GetKeyManager\SDK\LicenseException;
+use GetKeyManager\SDK\ValidationException;
 
 try {
     $result = $client->validateLicense('XXXXX-XXXXX-XXXXX-XXXXX');

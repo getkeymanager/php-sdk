@@ -39,12 +39,12 @@
   },
   "autoload": {
     "psr-4": {
-      "LicenseManager\\SDK\\": ""
+      "GetKeyManager\\SDK\\": ""
     }
   },
   "autoload-dev": {
     "psr-4": {
-      "LicenseManager\\SDK\\Tests\\": "tests/"
+      "GetKeyManager\\SDK\\Tests\\": "tests/"
     }
   },
   "scripts": {
