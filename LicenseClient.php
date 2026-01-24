@@ -83,7 +83,7 @@ class LicenseClient
 
         $payload = array_merge(['license_key' => $licenseKey], $options);
         
-        $response = $this->request('POST', '/api/v1/licenses/validate', $payload);
+        $response = $this->request('POST', '/api/v1/verify', $payload);
 
         if ($this->verifySignatures && isset($response['signature'])) {
             $this->verifyResponse($response);
@@ -116,7 +116,7 @@ class LicenseClient
         
         $response = $this->request(
             'POST',
-            '/api/v1/licenses/activate',
+            '/api/v1/activate',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -148,7 +148,7 @@ class LicenseClient
 
         $response = $this->request(
             'POST',
-            '/api/v1/licenses/deactivate',
+            '/api/v1/deactivate',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
