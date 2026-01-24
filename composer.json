@@ -1,5 +1,5 @@
 {
-  "name": "licensemanager/php-sdk",
+  "name": "getkeymanager/php-sdk",
   "description": "Official PHP SDK for License Management Platform API",
   "type": "library",
   "keywords": [
@@ -22,8 +22,8 @@
   "support": {
     "email": "support@getkeymanager.com",
     "docs": "https://docs.getkeymanager.com",
-    "issues": "https://github.com/licensemanager/php-sdk/issues",
-    "source": "https://github.com/licensemanager/php-sdk"
+    "issues": "https://github.com/getkeymanager/php-sdk/issues",
+    "source": "https://github.com/getkeymanager/php-sdk"
   },
   "require": {
     "php": "^7.4 || ^8.0",

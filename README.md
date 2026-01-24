@@ -43,7 +43,7 @@ Official PHP SDK for the License Management Platform API.
 ### Via Composer (Recommended)
 
 ```bash
-composer require licensemanager/php-sdk
+composer require getkeymanager/php-sdk
 ```
 
 ### Manual Installation
@@ -397,7 +397,7 @@ See the `/examples` directory for complete working examples:
 
 - Documentation: https://docs.getkeymanager.com
 - API Reference: https://api.getkeymanager.com/docs
-- Issues: https://github.com/licensemanager/php-sdk/issues
+- Issues: https://github.com/getkeymanager/php-sdk/issues
 - Email: support@getkeymanager.com
 
 ## License
