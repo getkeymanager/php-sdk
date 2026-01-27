@@ -5,8 +5,15 @@ declare(strict_types=1);
 namespace GetKeyManager\SDK;
 
 use GetKeyManager\SDK\Config\Configuration;
+use GetKeyManager\SDK\Downloads\DownloadManager;
+use GetKeyManager\SDK\Features\FeatureChecker;
 use GetKeyManager\SDK\Http\HttpClient;
 use GetKeyManager\SDK\Cache\CacheManager;
+use GetKeyManager\SDK\Management\ContractManager;
+use GetKeyManager\SDK\Management\LicenseManager;
+use GetKeyManager\SDK\Management\ProductManager;
+use GetKeyManager\SDK\Telemetry\TelemetryClient;
+use GetKeyManager\SDK\Validation\LicenseValidator;
 
 /**
  * License Management Platform - PHP SDK Client

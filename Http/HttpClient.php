@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace GetKeyManager\SDK\Http;
 
 use GetKeyManager\SDK\Config\Configuration;
-use GetKeyManager\SDK\NetworkException;
 use GetKeyManager\SDK\LicenseException;
+use GetKeyManager\SDK\NetworkException;
 use GetKeyManager\SDK\RateLimitException;
 use GetKeyManager\SDK\StateResolver;
 use GetKeyManager\SDK\SignatureVerifier;
@@ -220,7 +220,7 @@ class HttpClient
             $exception = new LicenseException(
                 $message,
                 $httpCode,
-                $codeName,
+                $apiCode,
                 $responseData['response']['data'] ?? [],
                 null,
                 $apiCode
