@@ -65,8 +65,19 @@ class HttpClient
     ): array {
         $url = $this->config->getBaseUrl() . $endpoint;
         
+        // Add api_key as a fallback/redundancy
+        if ($method === 'GET') {
+            $separator = (strpos($url, '?') === false) ? '?' : '&';
+            $url .= $separator . 'api_key=' . urlencode($this->config->getApiKey());
+        } elseif (in_array($method, ['POST', 'PUT', 'PATCH'])) {
+            if ($data === null) {
+                $data = [];
+            }
+            $data['api_key'] = $this->config->getApiKey();
+        }
+        
         $headers = array_merge([
-            'X-API-Key: ' . $this->config->getApiKey(),
+            'Authorization: Bearer ' . $this->config->getApiKey(), // Send as Bearer token to match middleware
             'Content-Type: application/json',
             'Accept: application/json',
             'User-Agent: GetKeyManager-PHP-SDK/' . self::VERSION
