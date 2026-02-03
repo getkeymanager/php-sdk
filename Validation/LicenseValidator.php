@@ -80,7 +80,7 @@ class LicenseValidator
 
         $payload = array_merge(['license_key' => $licenseKey], $options);
         
-        $response = $this->httpClient->request('POST', '/api/v1/verify', $payload);
+        $response = $this->httpClient->request('POST', '/v1/verify', $payload);
 
         $this->cacheManager->set($cacheKey, $response);
 
@@ -251,7 +251,7 @@ class LicenseValidator
         
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/activate',
+            '/v1/activate',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -279,12 +279,35 @@ class LicenseValidator
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/deactivate',
+            '/v1/deactivate',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
 
         $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
+
+        return $response;
+    }
+
+    /**
+     * Get license file content for offline validation
+     * 
+     * Retrieve .lic file content for offline license validation. Returns base64 encoded 
+     * license file with cryptographic signature that can be verified offline using 
+     * the product's public key.
+     * 
+     * @param string $licenseKey License key
+     * @param array $options Optional parameters (identifier for hardware-bound licenses)
+     * @return array License file result with licFileContent
+     * @throws LicenseException
+     */
+    public function getLicenseFile(string $licenseKey, array $options = []): array
+    {
+        $this->validateLicenseKey($licenseKey);
+
+        $payload = array_merge(['license_key' => $licenseKey], $options);
+
+        $response = $this->httpClient->request('POST', '/v1/get-license-file', $payload);
 
         return $response;
     }

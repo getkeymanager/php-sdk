@@ -104,7 +104,7 @@ class TelemetryClient
                 $data['product_version'] = $options['product_version'];
             }
 
-            $response = $this->httpClient->request('POST', '/api/v1/send-telemetry-data', $data);
+            $response = $this->httpClient->request('POST', '/v1/send-telemetry', $data);
 
             return [
                 'success' => true,
@@ -155,7 +155,7 @@ class TelemetryClient
             $queryParams['has_red_flags'] = $filters['has_red_flags'];
         }
 
-        $endpoint = '/api/v1/get-telemetry-data?' . http_build_query($queryParams);
+        $endpoint = '/v1/get-telemetry-data?' . http_build_query($queryParams);
 
         $response = $this->httpClient->request('GET', $endpoint);
 

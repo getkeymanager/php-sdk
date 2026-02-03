@@ -53,7 +53,7 @@ class ContractManager
             return $cached;
         }
 
-        $response = $this->httpClient->request('GET', '/api/v1/get-all-contracts');
+        $response = $this->httpClient->request('GET', '/v1/get-all-contracts');
 
         $this->cacheManager->set($cacheKey, $response);
 
@@ -86,7 +86,7 @@ class ContractManager
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/create-contract',
+            '/v1/create-contract',
             $contractData,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -112,7 +112,7 @@ class ContractManager
 
         $contractData['contract_id'] = $contractId;
 
-        $response = $this->httpClient->request('POST', '/api/v1/update-contract', $contractData);
+        $response = $this->httpClient->request('POST', '/v1/update-contract', $contractData);
 
         $this->cacheManager->clear();
 
@@ -132,7 +132,7 @@ class ContractManager
             throw new InvalidArgumentException('Contract ID must be positive');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/delete-contract', [
+        $response = $this->httpClient->request('POST', '/v1/delete-contract', [
             'contract_id' => $contractId
         ]);
 

@@ -80,7 +80,7 @@ class FeatureChecker
 
         $response = $this->httpClient->request(
             'GET',
-            "/api/v1/licenses/{$licenseKey}/features/{$featureName}"
+            "/v1/licenses/{$licenseKey}/features/{$featureName}"
         );
 
         $this->cacheManager->set($cacheKey, $response);

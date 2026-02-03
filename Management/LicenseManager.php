@@ -66,21 +66,23 @@ class LicenseManager
             throw new InvalidArgumentException('Licenses array cannot be empty');
         }
 
-        $payload = [
-            'product_uuid' => $productUuid,
-            'generator_uuid' => $generatorUuid,
-            'licenses' => $licenses
-        ];
+        $payloadLicenses = array_map(function($license) use ($productUuid, $generatorUuid, $customerEmail) {
+            return array_merge([
+                'product_uuid' => $productUuid,
+                'generator_uuid' => $generatorUuid,
+                'customer_email' => $customerEmail
+            ], $license);
+        }, $licenses);
 
-        if ($customerEmail) {
-            $payload['customer_email'] = $customerEmail;
-        }
+        $payload = [
+            'licenses' => $payloadLicenses
+        ];
 
         $idempotencyKey = $options['idempotencyKey'] ?? $this->generateUuid();
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/create-license-keys',
+            '/v1/create-license-keys',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -114,7 +116,7 @@ class LicenseManager
             $payload['validity_days'] = $options['validity_days'];
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/update-license-key', $payload);
+        $response = $this->httpClient->request('POST', '/v1/update-license-key', $payload);
 
         $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
 
@@ -132,7 +134,7 @@ class LicenseManager
     {
         $this->validateLicenseKey($licenseKey);
 
-        $response = $this->httpClient->request('POST', '/api/v1/delete-license-key', [
+        $response = $this->httpClient->request('POST', '/v1/delete-license-key', [
             'license_key' => $licenseKey
         ]);
 
@@ -164,7 +166,7 @@ class LicenseManager
             $queryParams['customer_email'] = $filters['customer_email'];
         }
 
-        $endpoint = '/api/v1/get-license-keys';
+        $endpoint = '/v1/get-license-keys';
         if (!empty($queryParams)) {
             $endpoint .= '?' . http_build_query($queryParams);
         }
@@ -190,7 +192,7 @@ class LicenseManager
             return $cached;
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/get-license-key-details', [
+        $response = $this->httpClient->request('POST', '/v1/get-license-key-details', [
             'license_key' => $licenseKey
         ]);
 
@@ -203,18 +205,22 @@ class LicenseManager
      * Get available license keys count
      * 
      * @param string $productUuid Product UUID
+     * @param string|null $generatorUuid Optional generator UUID
      * @return array Count result
      * @throws LicenseException
      */
-    public function getAvailableLicenseKeysCount(string $productUuid): array
+    public function getAvailableLicenseKeysCount(string $productUuid, ?string $generatorUuid = null): array
     {
         if (empty($productUuid)) {
             throw new InvalidArgumentException('Product UUID is required');
         }
 
-        $response = $this->httpClient->request('GET', '/api/v1/get-available-license-keys-count?' . http_build_query([
-            'product_uuid' => $productUuid
-        ]));
+        $params = ['product_uuid' => $productUuid];
+        if ($generatorUuid) {
+            $params['generator_uuid'] = $generatorUuid;
+        }
+
+        $response = $this->httpClient->request('GET', '/v1/get-available-license-keys-count?' . http_build_query($params));
 
         return $response;
     }
@@ -248,7 +254,7 @@ class LicenseManager
             $payload['customer_name'] = $customerName;
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/assign-license-key', $payload);
+        $response = $this->httpClient->request('POST', '/v1/assign-license-key', $payload);
 
         $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
 
@@ -302,7 +308,7 @@ class LicenseManager
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/random-assign-license-keys',
+            '/v1/random-assign-license-keys',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -357,7 +363,7 @@ class LicenseManager
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/random-assign-license-keys-queued',
+            '/v1/random-assign-license-keys-queued',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -371,7 +377,7 @@ class LicenseManager
      * @param string $licenseKey License key
      * @param string $customerEmail Customer email
      * @param string $identifier Hardware ID or domain
-     * @param array $options Additional options (idempotencyKey)
+     * @param array $options Additional options (customer_name, metadata, idempotencyKey)
      * @return array Assignment and activation result
      * @throws LicenseException
      */
@@ -397,11 +403,19 @@ class LicenseManager
             'identifier' => $identifier
         ];
 
+        if (isset($options['customer_name'])) {
+            $payload['customer_name'] = $options['customer_name'];
+        }
+
+        if (isset($options['metadata'])) {
+            $payload['metadata'] = $options['metadata'];
+        }
+
         $idempotencyKey = $options['idempotencyKey'] ?? $this->generateUuid();
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/assign-and-activate-license-key',
+            '/v1/assign-and-activate-license-key',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -428,7 +442,7 @@ class LicenseManager
             throw new InvalidArgumentException('Metadata key cannot be empty');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/create-license-key-meta', [
+        $response = $this->httpClient->request('POST', '/v1/create-license-key-meta', [
             'license_key' => $licenseKey,
             'meta_key' => $metaKey,
             'meta_value' => $metaValue
@@ -456,7 +470,7 @@ class LicenseManager
             throw new InvalidArgumentException('Metadata key cannot be empty');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/update-license-key-meta', [
+        $response = $this->httpClient->request('POST', '/v1/update-license-key-meta', [
             'license_key' => $licenseKey,
             'meta_key' => $metaKey,
             'meta_value' => $metaValue
@@ -483,7 +497,7 @@ class LicenseManager
             throw new InvalidArgumentException('Metadata key cannot be empty');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/delete-license-key-meta', [
+        $response = $this->httpClient->request('POST', '/v1/delete-license-key-meta', [
             'license_key' => $licenseKey,
             'meta_key' => $metaKey
         ]);

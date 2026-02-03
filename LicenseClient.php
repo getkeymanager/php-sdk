@@ -424,9 +424,9 @@ class LicenseClient
     // DOWNLOADS (delegate to DownloadManager)
     // ========================================================================
 
-    public function accessDownloadables(string $licenseKey, string $identifier): array
+    public function accessDownloadables(string $licenseKey, array $options = []): array
     {
-        return $this->getDownloadManager()->accessDownloadables($licenseKey, $identifier);
+        return $this->getDownloadManager()->accessDownloadables($licenseKey, $options);
     }
 
     public function getProductChangelog(string $slug): array

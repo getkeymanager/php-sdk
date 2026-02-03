@@ -44,22 +44,17 @@ class DownloadManager
      * Access downloadables for a license
      * 
      * @param string $licenseKey License key
-     * @param string $identifier Hardware ID or domain
+     * @param array $options Additional options (product_uuid, version, identifier)
      * @return array Downloadable files with signed URLs
      * @throws LicenseException
      */
-    public function accessDownloadables(string $licenseKey, string $identifier): array
+    public function accessDownloadables(string $licenseKey, array $options = []): array
     {
         $this->validateLicenseKey($licenseKey);
 
-        if (empty($identifier)) {
-            throw new InvalidArgumentException('Identifier is required');
-        }
+        $payload = array_merge(['license_key' => $licenseKey], $options);
 
-        $response = $this->httpClient->request('POST', '/api/v1/access-downloadables', [
-            'license_key' => $licenseKey,
-            'identifier' => $identifier
-        ]);
+        $response = $this->httpClient->request('POST', '/v1/access-downloadables', $payload);
 
         return $response;
     }
@@ -83,7 +78,7 @@ class DownloadManager
         }
 
         // This endpoint doesn't require authentication, so we make a simpler request
-        $response = $this->httpClient->requestPublic('GET', "/api/v1/products/{$slug}/changelog");
+        $response = $this->httpClient->requestPublic('GET', "/v1/products/{$slug}/changelog");
 
         $this->cacheManager->set($cacheKey, $response);
 
@@ -104,7 +99,7 @@ class DownloadManager
             return $cached;
         }
 
-        $endpoint = '/api/v1/get-all-generators';
+        $endpoint = '/v1/get-all-generators';
         if ($productUuid) {
             $endpoint .= '?' . http_build_query(['product_uuid' => $productUuid]);
         }
@@ -152,7 +147,7 @@ class DownloadManager
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/generate',
+            '/v1/generate',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );

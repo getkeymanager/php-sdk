@@ -68,11 +68,23 @@ class ProductManager
             $payload['status'] = $options['status'];
         }
 
+        if (isset($options['changelog_enabled'])) {
+            $payload['changelog_enabled'] = $options['changelog_enabled'];
+        }
+
+        if (isset($options['image'])) {
+            $payload['image'] = $options['image'];
+        }
+
+        if (isset($options['features'])) {
+            $payload['features'] = $options['features'];
+        }
+
         $idempotencyKey = $options['idempotencyKey'] ?? $this->generateUuid();
 
         $response = $this->httpClient->request(
             'POST',
-            '/api/v1/create-product',
+            '/v1/create-product',
             $payload,
             ['Idempotency-Key' => $idempotencyKey]
         );
@@ -100,6 +112,10 @@ class ProductManager
             $payload['name'] = $options['name'];
         }
 
+        if (isset($options['slug'])) {
+            $payload['slug'] = $options['slug'];
+        }
+
         if (isset($options['description'])) {
             $payload['description'] = $options['description'];
         }
@@ -108,7 +124,15 @@ class ProductManager
             $payload['status'] = $options['status'];
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/update-product', $payload);
+        if (isset($options['changelog_enabled'])) {
+            $payload['changelog_enabled'] = $options['changelog_enabled'];
+        }
+
+        if (isset($options['features'])) {
+            $payload['features'] = $options['features'];
+        }
+
+        $response = $this->httpClient->request('POST', '/v1/update-product', $payload);
 
         return $response;
     }
@@ -126,7 +150,7 @@ class ProductManager
             throw new InvalidArgumentException('Product UUID is required');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/delete-product', [
+        $response = $this->httpClient->request('POST', '/v1/delete-product', [
             'product_uuid' => $productUuid
         ]);
 
@@ -146,7 +170,7 @@ class ProductManager
             return $cached;
         }
 
-        $response = $this->httpClient->request('GET', '/api/v1/get-all-products');
+        $response = $this->httpClient->request('GET', '/v1/get-all-products');
 
         $this->cacheManager->set($cacheKey, $response);
 
@@ -172,7 +196,7 @@ class ProductManager
             throw new InvalidArgumentException('Metadata key cannot be empty');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/create-product-meta', [
+        $response = $this->httpClient->request('POST', '/v1/create-product-meta', [
             'product_uuid' => $productUuid,
             'meta_key' => $metaKey,
             'meta_value' => $metaValue
@@ -200,7 +224,7 @@ class ProductManager
             throw new InvalidArgumentException('Metadata key cannot be empty');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/update-product-meta', [
+        $response = $this->httpClient->request('POST', '/v1/update-product-meta', [
             'product_uuid' => $productUuid,
             'meta_key' => $metaKey,
             'meta_value' => $metaValue
@@ -227,10 +251,144 @@ class ProductManager
             throw new InvalidArgumentException('Metadata key cannot be empty');
         }
 
-        $response = $this->httpClient->request('POST', '/api/v1/delete-product-meta', [
+        $response = $this->httpClient->request('POST', '/v1/delete-product-meta', [
             'product_uuid' => $productUuid,
             'meta_key' => $metaKey
         ]);
+
+        return $response;
+    }
+
+    /**
+     * Get product metadata
+     * 
+     * Retrieves all product metadata as key-value pairs
+     * 
+     * @param string $productUuid Product UUID
+     * @return array Product metadata
+     * @throws LicenseException
+     */
+    public function getProductMeta(string $productUuid): array
+    {
+        if (empty($productUuid)) {
+            throw new InvalidArgumentException('Product UUID is required');
+        }
+
+        $cacheKey = $this->cacheManager->generateKey('product_meta', $productUuid);
+        if ($cached = $this->cacheManager->get($cacheKey)) {
+            return $cached;
+        }
+
+        $response = $this->httpClient->request('GET', '/v1/get-product-meta', [
+            'product_uuid' => $productUuid
+        ]);
+
+        $this->cacheManager->set($cacheKey, $response);
+
+        return $response;
+    }
+
+    /**
+     * Get product with features
+     * 
+     * Retrieve individual product information with all features.
+     * Accepts product_uuid or product_slug.
+     * 
+     * @param array $options Either ['product_uuid' => '...'] or ['product_slug' => '...']
+     * @return array Product information with features
+     * @throws LicenseException
+     */
+    public function getProduct(array $options): array
+    {
+        if (empty($options['product_uuid']) && empty($options['product_slug'])) {
+            throw new InvalidArgumentException('Either product_uuid or product_slug is required');
+        }
+
+        $params = [];
+        if (!empty($options['product_uuid'])) {
+            $params['product_uuid'] = $options['product_uuid'];
+        } elseif (!empty($options['product_slug'])) {
+            $params['product_slug'] = $options['product_slug'];
+        }
+
+        $cacheKey = $this->cacheManager->generateKey('product', json_encode($params));
+        if ($cached = $this->cacheManager->get($cacheKey)) {
+            return $cached;
+        }
+
+        $response = $this->httpClient->request('GET', '/v1/get-product', $params);
+
+        $this->cacheManager->set($cacheKey, $response);
+
+        return $response;
+    }
+
+    /**
+     * Get product with changelog
+     * 
+     * Retrieve product information with changelog entries.
+     * Accepts product_uuid or product_slug.
+     * 
+     * @param array $options Either ['product_uuid' => '...'] or ['product_slug' => '...']
+     * @return array Product information with changelog
+     * @throws LicenseException
+     */
+    public function getProductChangelog(array $options): array
+    {
+        if (empty($options['product_uuid']) && empty($options['product_slug'])) {
+            throw new InvalidArgumentException('Either product_uuid or product_slug is required');
+        }
+
+        $params = [];
+        if (!empty($options['product_uuid'])) {
+            $params['product_uuid'] = $options['product_uuid'];
+        } elseif (!empty($options['product_slug'])) {
+            $params['product_slug'] = $options['product_slug'];
+        }
+
+        $cacheKey = $this->cacheManager->generateKey('product_changelog', json_encode($params));
+        if ($cached = $this->cacheManager->get($cacheKey)) {
+            return $cached;
+        }
+
+        $response = $this->httpClient->request('GET', '/v1/get-product-changelog', $params);
+
+        $this->cacheManager->set($cacheKey, $response);
+
+        return $response;
+    }
+
+    /**
+     * Get product public key
+     * 
+     * Retrieve product's cryptographic public key for signature verification.
+     * Accepts product_uuid or product_slug.
+     * 
+     * @param array $options Either ['product_uuid' => '...'] or ['product_slug' => '...']
+     * @return array Product public key
+     * @throws LicenseException
+     */
+    public function getProductPublicKey(array $options): array
+    {
+        if (empty($options['product_uuid']) && empty($options['product_slug'])) {
+            throw new InvalidArgumentException('Either product_uuid or product_slug is required');
+        }
+
+        $params = [];
+        if (!empty($options['product_uuid'])) {
+            $params['product_uuid'] = $options['product_uuid'];
+        } elseif (!empty($options['product_slug'])) {
+            $params['product_slug'] = $options['product_slug'];
+        }
+
+        $cacheKey = $this->cacheManager->generateKey('product_public_key', json_encode($params));
+        if ($cached = $this->cacheManager->get($cacheKey)) {
+            return $cached;
+        }
+
+        $response = $this->httpClient->request('GET', '/v1/get-product-public-key', $params);
+
+        $this->cacheManager->set($cacheKey, $response);
 
         return $response;
     }
