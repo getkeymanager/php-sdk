@@ -44,7 +44,7 @@ class Configuration
         $this->validateConfig($config);
 
         $this->apiKey = $config['apiKey'];
-        $this->baseUrl = $config['baseUrl'] ?? 'https://api.getkeymanager.com';
+        $this->baseUrl = $config['baseUrl'] ?? 'https://dev.getkeymanager.com/api';
         
         // Cast to int and ensure positive values
         $timeout = (int)($config['timeout'] ?? self::DEFAULT_TIMEOUT);

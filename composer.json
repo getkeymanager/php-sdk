@@ -39,19 +39,8 @@
   },
   "autoload": {
     "psr-4": {
-      "GetKeyManager\\SDK\\": "",
-      "GetKeyManager\\SDK\\Http\\": "Http/",
-      "GetKeyManager\\SDK\\Validation\\": "Validation/",
-      "GetKeyManager\\SDK\\Management\\": "Management/",
-      "GetKeyManager\\SDK\\Features\\": "Features/",
-      "GetKeyManager\\SDK\\Telemetry\\": "Telemetry/",
-      "GetKeyManager\\SDK\\Downloads\\": "Downloads/",
-      "GetKeyManager\\SDK\\Cache\\": "Cache/",
-      "GetKeyManager\\SDK\\Config\\": "Config/"
-    },
-    "files": [
-      "Exceptions.php"
-    ]
+      "GetKeyManager\\SDK\\": "src/"
+    }
   },
   "autoload-dev": {
     "psr-4": {

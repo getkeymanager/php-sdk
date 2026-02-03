@@ -1,6 +1,5 @@
-# License Management Platform - PHP SDK
+# KeyManager - PHP SDK
 
-Official PHP SDK for the License Management Platform API.
 
 **Version: 2.0.0** - Now with complete API coverage!
 
@@ -395,10 +394,11 @@ See the `/examples` directory for complete working examples:
 
 ## Support
 
-- Documentation: https://docs.getkeymanager.com
-- API Reference: https://api.getkeymanager.com/docs
-- Issues: https://github.com/getkeymanager/php-sdk/issues
-- Email: support@getkeymanager.com
+- **Website**: https://getkeymanager.com
+- **Documentation**: https://docs.getkeymanager.com
+- **API Reference**: https://dev.getkeymanager.com/api
+- **Issues**: https://github.com/getkeymanager/php-sdk/issues
+- **Email**: support@getkeymanager.com
 
 ## License
 
