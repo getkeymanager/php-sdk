@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace GetKeyManager\SDK\Http;
 
 use GetKeyManager\SDK\Config\Configuration;
-use GetKeyManager\SDK\LicenseException;
-use GetKeyManager\SDK\NetworkException;
-use GetKeyManager\SDK\RateLimitException;
+use GetKeyManager\SDK\Exceptions\LicenseException;
+use GetKeyManager\SDK\Exceptions\NetworkException;
+use GetKeyManager\SDK\Exceptions\RateLimitException;
 use GetKeyManager\SDK\StateResolver;
 use GetKeyManager\SDK\SignatureVerifier;
-use GetKeyManager\SDK\SignatureException;
+use GetKeyManager\SDK\Exceptions\SignatureException;
 use GetKeyManager\SDK\ApiResponseCode;
 use RuntimeException;
 
