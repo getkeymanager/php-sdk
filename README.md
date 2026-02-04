@@ -28,6 +28,29 @@
 - ✅ **Advanced telemetry** - Retrieve telemetry data with filters
 - ✅ **Public changelog API** - Access changelogs without authentication
 
+### New in v2.1.0
+- ✅ **New endpoints**: `getLicenseFile()`, `getProductMeta()`, `getProduct()`, `getProductChangelog()`, `getProductPublicKey()`
+- ✅ **New response codes**: LICENSE_FILE_RETRIEVED (502), LICENSE_FILE_GENERATION_FAILED (503), LICENSE_KEY_NOT_FOUND_DETAILS (501), PRODUCT_FOUND (631), PRODUCT_PUBLIC_KEY_FOUND (632), PRODUCT_PUBLIC_KEY_NOT_FOUND (633)
+- ✅ **Offline .lic parsing**: `parseLicenseFile()` (Base64 decode → 256-byte chunks → RSA PKCS1 decrypt → JSON)
+- ✅ **License/key sync**: `syncLicenseAndKey()` with atomic file updates + telemetry
+- ✅ **Validation timers**: `isCheckIntervalPast()` and `isForceValidationPast()` (fail-safe true on error)
+
+#### Offline .lic Parsing (LicenseValidator)
+```php
+use GetKeyManager\SDK\Validation\LicenseValidator;
+
+// $validator is the LicenseValidator instance (used internally by LicenseClient)
+$licenseData = $validator->parseLicenseFile($licFileContent, $publicKey);
+```
+
+#### Force Validation Check
+```php
+if ($validator->isForceValidationPast($licPath, $keyPath)) {
+    showLicenseScreen();
+    die("License validation required");
+}
+```
+
 **30+ new methods added while maintaining full backward compatibility!**
 
 ## Requirements

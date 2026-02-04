@@ -379,6 +379,431 @@ class LicenseValidator
     }
 
     /**
+     * Parse and decrypt a .lic license file
+     * 
+     * Decrypts a license file using the product's public key and returns the license data.
+     * This is for offline license validation scenarios.
+     * 
+     * @param string $licFileContent Base64-encoded encrypted license file content
+     * @param string $publicKey Product public key in PEM format
+     * @return array Decrypted license data
+     * @throws ValidationException If decryption fails or data is invalid
+     */
+    public function parseLicenseFile(string $licFileContent, string $publicKey): array
+    {
+        try {
+            // Validate inputs
+            if (empty($licFileContent)) {
+                throw new ValidationException(
+                    'License file content cannot be empty',
+                    'EMPTY_LICENSE_FILE'
+                );
+            }
+
+            if (empty($publicKey)) {
+                throw new ValidationException(
+                    'Public key cannot be empty',
+                    'EMPTY_PUBLIC_KEY'
+                );
+            }
+
+            // Decode base64
+            $encryptedData = base64_decode($licFileContent, true);
+            if ($encryptedData === false) {
+                throw new ValidationException(
+                    'Invalid base64 encoding in license file',
+                    'INVALID_BASE64'
+                );
+            }
+
+            // Split into chunks (256 bytes for RSA-2048/4096)
+            $chunks = str_split($encryptedData, 256);
+            $decrypted = '';
+
+            // Verify public key is valid
+            $keyResource = openssl_pkey_get_public($publicKey);
+            if ($keyResource === false) {
+                $opensslError = openssl_error_string() ?: 'Unknown OpenSSL error';
+                throw new ValidationException(
+                    'Invalid public key: ' . $opensslError,
+                    'INVALID_PUBLIC_KEY'
+                );
+            }
+
+            // Decrypt each chunk
+            foreach ($chunks as $index => $chunk) {
+                $partial = '';
+                
+                // Decrypt using public key with PKCS1 padding
+                $decryptionOk = openssl_public_decrypt(
+                    $chunk,
+                    $partial,
+                    $publicKey,
+                    OPENSSL_PKCS1_PADDING
+                );
+
+                if ($decryptionOk === false) {
+                    $opensslError = openssl_error_string() ?: 'Unknown OpenSSL error';
+                    throw new ValidationException(
+                        'Decryption failed at chunk ' . $index . ': ' . $opensslError . '. ' .
+                        'This may indicate a corrupted license file or incorrect public key.',
+                        'DECRYPTION_FAILED'
+                    );
+                }
+                
+                $decrypted .= $partial;
+            }
+
+            // Free the key resource
+            openssl_pkey_free($keyResource);
+
+            // Parse JSON
+            $licenseData = json_decode($decrypted, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new ValidationException(
+                    'Invalid JSON in decrypted license data: ' . json_last_error_msg(),
+                    'INVALID_JSON'
+                );
+            }
+
+            if (!is_array($licenseData)) {
+                throw new ValidationException(
+                    'Decrypted license data is not a valid array',
+                    'INVALID_DATA_FORMAT'
+                );
+            }
+
+            return $licenseData;
+
+        } catch (ValidationException $e) {
+            // Re-throw validation exceptions as-is
+            throw $e;
+        } catch (Exception $e) {
+            // Wrap any other exceptions
+            throw new ValidationException(
+                'Unexpected error parsing license file: ' . $e->getMessage(),
+                'PARSE_ERROR',
+                0,
+                $e
+            );
+        }
+    }
+
+    /**
+     * Synchronize license and key files with server
+     * 
+     * This function:
+     * 1. Parses local .lic file using parseLicenseFile()
+     * 2. Verifies license with server via POST /v1/verify
+     * 3. Updates .lic file if verification successful
+     * 4. Fetches and updates .key file from server
+     * 5. Sends telemetry on failures for piracy detection
+     * 
+     * @param string $licPath Path to local .lic file
+     * @param string $keyPath Path to local .key/.pem file
+     * @return array Result with keys: success, licenseUpdated, keyUpdated, errors[], warnings[]
+     */
+    public function syncLicenseAndKey(string $licPath, string $keyPath): array
+    {
+        $result = [
+            'success' => false,
+            'licenseUpdated' => false,
+            'keyUpdated' => false,
+            'errors' => [],
+            'warnings' => []
+        ];
+
+        try {
+            // Step 1: Validate file paths
+            if (!file_exists($licPath)) {
+                throw new Exception("License file not found: {$licPath}");
+            }
+            if (!is_readable($licPath)) {
+                throw new Exception("License file not readable: {$licPath}");
+            }
+            if (!file_exists($keyPath)) {
+                throw new Exception("Key file not found: {$keyPath}");
+            }
+            if (!is_readable($keyPath)) {
+                throw new Exception("Key file not readable: {$keyPath}");
+            }
+
+            // Read files
+            $licFileContent = file_get_contents($licPath);
+            $publicKey = file_get_contents($keyPath);
+
+            if ($licFileContent === false) {
+                throw new Exception("Failed to read license file: {$licPath}");
+            }
+            if ($publicKey === false) {
+                throw new Exception("Failed to read key file: {$keyPath}");
+            }
+
+            // Step 2: Parse local .lic file
+            $licenseData = $this->parseLicenseFile($licFileContent, $publicKey);
+
+            // Extract license key for verification
+            $licenseKey = $licenseData['license_key'] ?? $licenseData['key'] ?? null;
+            if (!$licenseKey) {
+                throw new Exception("License key not found in .lic file");
+            }
+
+            // Verify product UUID matches
+            $configProductUuid = $this->config->getProductId();
+            $fileProductUuid = $licenseData['product_uuid'] ?? $licenseData['product']['uuid'] ?? null;
+            
+            if ($configProductUuid && $fileProductUuid && $configProductUuid !== $fileProductUuid) {
+                throw new Exception("Product UUID mismatch. Config: {$configProductUuid}, File: {$fileProductUuid}");
+            }
+
+            // Collect system information for telemetry
+            $systemInfo = $this->collectSystemInformation();
+
+            // Step 3: Verify license with server
+            try {
+                $verifyPayload = [
+                    'license_key' => $licenseKey,
+                    'server_domain' => $systemInfo['domain'],
+                    'server_ip' => $systemInfo['ip']
+                ];
+
+                // Add hardware ID if available
+                if (isset($licenseData['hardware_id'])) {
+                    $verifyPayload['hardware_id'] = $licenseData['hardware_id'];
+                }
+
+                $verifyResponse = $this->httpClient->request('POST', '/v1/verify', $verifyPayload);
+
+                // Check if response is signed
+                if ($this->signatureVerifier && !$this->isResponseSigned($verifyResponse)) {
+                    throw new Exception("Verification response is not properly signed");
+                }
+
+                // Step 4: Update .lic file if licFileContent provided
+                if (isset($verifyResponse['licFileContent']) && !empty($verifyResponse['licFileContent'])) {
+                    $this->atomicFileWrite($licPath, $verifyResponse['licFileContent']);
+                    $result['licenseUpdated'] = true;
+                } else {
+                    $result['warnings'][] = "Server did not provide updated license file content";
+                }
+
+            } catch (Exception $e) {
+                // Step 3.1: Verification failed - send telemetry
+                $this->sendTelemetryOnFailure(
+                    $licenseKey,
+                    'Check Failed',
+                    'License verification failed: ' . $e->getMessage(),
+                    $systemInfo
+                );
+                
+                $result['errors'][] = 'License verification failed: ' . $e->getMessage();
+                return $result;
+            }
+
+            // Step 5: Fetch updated public key
+            if (!$fileProductUuid) {
+                $result['warnings'][] = "Product UUID not found in license file, skipping key update";
+            } else {
+                try {
+                    $keyResponse = $this->httpClient->request('GET', '/api/v1/get-product-public-key', [
+                        'product_uuid' => $fileProductUuid
+                    ]);
+
+                    // Check if response is signed
+                    if ($this->signatureVerifier && !$this->isResponseSigned($keyResponse)) {
+                        throw new Exception("Public key response is not properly signed");
+                    }
+
+                    // Verify product UUID matches
+                    $responseProductUuid = $keyResponse['product']['uuid'] ?? $keyResponse['data']['product_uuid'] ?? null;
+                    if ($responseProductUuid && $responseProductUuid !== $fileProductUuid) {
+                        throw new Exception("Product UUID mismatch in key response");
+                    }
+
+                    // Step 6: Update .key file atomically
+                    $newPublicKey = $keyResponse['public_key'] ?? $keyResponse['data']['public_key'] ?? null;
+                    if ($newPublicKey && !empty($newPublicKey)) {
+                        $this->atomicFileWrite($keyPath, $newPublicKey);
+                        $result['keyUpdated'] = true;
+                    } else {
+                        $result['warnings'][] = "Server did not provide public key";
+                    }
+
+                } catch (Exception $e) {
+                    // Step 7: Key fetch failed - send telemetry
+                    $this->sendTelemetryOnFailure(
+                        $licenseKey,
+                        'Key Update Failed',
+                        'Public key fetch failed: ' . $e->getMessage(),
+                        $systemInfo
+                    );
+                    
+                    $result['errors'][] = 'Public key update failed: ' . $e->getMessage();
+                    // Don't return here - license was updated successfully
+                }
+            }
+
+            $result['success'] = true;
+            return $result;
+
+        } catch (Exception $e) {
+            // Catch-all for any unexpected errors
+            $result['errors'][] = $e->getMessage();
+            
+            // Send telemetry for unexpected errors
+            try {
+                $systemInfo = $this->collectSystemInformation();
+                $this->sendTelemetryOnFailure(
+                    'unknown',
+                    'Sync Failed',
+                    'syncLicenseAndKey error: ' . $e->getMessage(),
+                    $systemInfo
+                );
+            } catch (Exception $telemetryError) {
+                // Telemetry failed, but don't hide original error
+                $result['warnings'][] = 'Failed to send telemetry: ' . $telemetryError->getMessage();
+            }
+            
+            return $result;
+        }
+    }
+
+    /**
+     * Collect system information for telemetry
+     * 
+     * @return array System information
+     */
+    private function collectSystemInformation(): array
+    {
+        $info = [
+            'ip' => '',
+            'domain' => '',
+            'hostname' => '',
+            'os' => PHP_OS,
+            'php_version' => PHP_VERSION,
+            'timestamp' => date('Y-m-d H:i:s')
+        ];
+
+        // Get server IP
+        $info['ip'] = $_SERVER['SERVER_ADDR'] ?? $_SERVER['LOCAL_ADDR'] ?? gethostbyname(gethostname());
+
+        // Get domain
+        $info['domain'] = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? gethostname();
+
+        // Get hostname
+        $info['hostname'] = gethostname() ?: 'unknown';
+
+        // Get detailed system info on Linux
+        if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+            // Linux/Unix
+            if (function_exists('shell_exec') && is_callable('shell_exec')) {
+                $hostnamectl = @shell_exec('hostnamectl 2>/dev/null');
+                if ($hostnamectl) {
+                    $info['system_details'] = trim($hostnamectl);
+                }
+            }
+        } else {
+            // Windows
+            if (function_exists('shell_exec') && is_callable('shell_exec')) {
+                $systeminfo = @shell_exec('systeminfo | findstr /B /C:"OS Name" /C:"OS Version" /C:"System Type" 2>nul');
+                if ($systeminfo) {
+                    $info['system_details'] = trim($systeminfo);
+                }
+            }
+        }
+
+        return $info;
+    }
+
+    /**
+     * Send telemetry data on failure (for piracy detection)
+     * 
+     * @param string $licenseKey License key
+     * @param string $dataGroup Telemetry data group
+     * @param string $message Error message
+     * @param array $systemInfo System information
+     */
+    private function sendTelemetryOnFailure(string $licenseKey, string $dataGroup, string $message, array $systemInfo): void
+    {
+        try {
+            $telemetryData = [
+                'license_key' => $licenseKey,
+                'server_ip' => $systemInfo['ip'],
+                'server_domain' => $systemInfo['domain'],
+                'hostname' => $systemInfo['hostname'],
+                'os' => $systemInfo['os'],
+                'php_version' => $systemInfo['php_version'],
+                'timestamp' => $systemInfo['timestamp'],
+                'error_message' => $message
+            ];
+
+            if (isset($systemInfo['system_details'])) {
+                $telemetryData['system_details'] = $systemInfo['system_details'];
+            }
+
+            $payload = [
+                'data_type' => 'text',
+                'data_group' => $dataGroup,
+                'text_data' => json_encode($telemetryData),
+                'license_key' => $licenseKey
+            ];
+
+            // Send telemetry (fire and forget - don't throw on failure)
+            $this->httpClient->request('POST', '/v1/telemetry', $payload);
+        } catch (Exception $e) {
+            // Silent fail - telemetry is not critical
+        }
+    }
+
+    /**
+     * Atomically write content to a file
+     * 
+     * @param string $filePath Target file path
+     * @param string $content Content to write
+     * @throws Exception On write failure
+     */
+    private function atomicFileWrite(string $filePath, string $content): void
+    {
+        $dir = dirname($filePath);
+        $tempFile = $dir . '/' . uniqid('tmp_', true);
+
+        // Write to temporary file
+        if (file_put_contents($tempFile, $content, LOCK_EX) === false) {
+            throw new Exception("Failed to write temporary file: {$tempFile}");
+        }
+
+        // Set same permissions as original file (if exists)
+        if (file_exists($filePath)) {
+            $perms = fileperms($filePath);
+            if ($perms !== false) {
+                chmod($tempFile, $perms);
+            }
+        }
+
+        // Atomic rename
+        if (!rename($tempFile, $filePath)) {
+            @unlink($tempFile); // Clean up temp file
+            throw new Exception("Failed to replace file atomically: {$filePath}");
+        }
+    }
+
+    /**
+     * Check if API response is properly signed
+     * 
+     * @param array $response API response
+     * @return bool True if signed (or signatures disabled)
+     */
+    private function isResponseSigned(array $response): bool
+    {
+        if (!$this->config->shouldVerifySignatures()) {
+            return true; // Signatures not required
+        }
+
+        return isset($response['signature']) && !empty($response['signature']);
+    }
+
+    /**
      * Validate license key format
      * 
      * @param string $licenseKey License key
@@ -407,5 +832,236 @@ class LicenseValidator
         $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
         
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+    }
+
+    /**
+     * Check if license check interval has past
+     * 
+     * Parses the .lic file and checks if the license check interval
+     * (licenseCheckInterval days) has elapsed since lastCheckedDate.
+     * 
+     * Returns true if:
+     * - Check interval has expired
+     * - Any error occurs during parsing/validation
+     * 
+     * Automatically sends telemetry on expiration or error.
+     * 
+     * @param string $licPath Path to .lic file
+     * @param string $keyPath Path to public key file
+     * @return bool True if check interval has passed or error occurred
+     */
+    public function isCheckIntervalPast(string $licPath, string $keyPath): bool
+    {
+        try {
+            // Check if files exist
+            if (!file_exists($licPath)) {
+                $this->sendIntervalTelemetry('License file not found', $licPath, 'check_interval');
+                return true;
+            }
+
+            if (!file_exists($keyPath)) {
+                $this->sendIntervalTelemetry('Public key file not found', $keyPath, 'check_interval');
+                return true;
+            }
+
+            // Read files
+            $licContent = file_get_contents($licPath);
+            $publicKey = file_get_contents($keyPath);
+
+            if ($licContent === false || $publicKey === false) {
+                $this->sendIntervalTelemetry('Failed to read license or key file', $licPath, 'check_interval');
+                return true;
+            }
+
+            // Parse license file
+            $licenseData = $this->parseLicenseFile($licContent, $publicKey);
+
+            // Extract required fields
+            if (!isset($licenseData['lastCheckedDate']) || !isset($licenseData['licenseCheckInterval'])) {
+                $this->sendIntervalTelemetry('Missing lastCheckedDate or licenseCheckInterval', $licPath, 'check_interval');
+                return true;
+            }
+
+            $lastCheckedDate = $licenseData['lastCheckedDate'];
+            $intervalDays = (int)$licenseData['licenseCheckInterval'];
+            $licenseKey = $licenseData['licenseKey'] ?? 'unknown';
+
+            // Parse date
+            $lastChecked = \DateTime::createFromFormat('Y-m-d', $lastCheckedDate);
+            if (!$lastChecked) {
+                $this->sendIntervalTelemetry('Invalid lastCheckedDate format', $licPath, 'check_interval', $licenseKey);
+                return true;
+            }
+
+            // Calculate expiry date
+            $expiryDate = clone $lastChecked;
+            $expiryDate->modify("+{$intervalDays} days");
+
+            // Compare with current date
+            $currentDate = new \DateTime();
+            $isPast = $currentDate >= $expiryDate;
+
+            // Send telemetry if interval has passed
+            if ($isPast) {
+                $daysOverdue = $currentDate->diff($expiryDate)->days;
+                $this->sendIntervalTelemetry(
+                    "License check interval expired (overdue by {$daysOverdue} days)",
+                    $licPath,
+                    'check_interval',
+                    $licenseKey
+                );
+            }
+
+            return $isPast;
+
+        } catch (\Exception $e) {
+            // On any error, send telemetry and return true (fail-safe)
+            $this->sendIntervalTelemetry(
+                'Error checking interval: ' . $e->getMessage(),
+                $licPath ?? 'unknown',
+                'check_interval'
+            );
+            return true;
+        }
+    }
+
+    /**
+     * Check if force validation period has past
+     * 
+     * Parses the .lic file and checks if the force validation period
+     * (forceLicenseValidation days) has elapsed since lastCheckedDate.
+     * 
+     * Returns true if:
+     * - Force validation period has expired
+     * - Any error occurs during parsing/validation
+     * 
+     * When this returns true, the application should show license screen
+     * and require admin to revalidate.
+     * 
+     * Automatically sends telemetry on expiration or error.
+     * 
+     * @param string $licPath Path to .lic file
+     * @param string $keyPath Path to public key file
+     * @return bool True if force validation period has passed or error occurred
+     */
+    public function isForceValidationPast(string $licPath, string $keyPath): bool
+    {
+        try {
+            // Check if files exist
+            if (!file_exists($licPath)) {
+                $this->sendIntervalTelemetry('License file not found', $licPath, 'force_validation');
+                return true;
+            }
+
+            if (!file_exists($keyPath)) {
+                $this->sendIntervalTelemetry('Public key file not found', $keyPath, 'force_validation');
+                return true;
+            }
+
+            // Read files
+            $licContent = file_get_contents($licPath);
+            $publicKey = file_get_contents($keyPath);
+
+            if ($licContent === false || $publicKey === false) {
+                $this->sendIntervalTelemetry('Failed to read license or key file', $licPath, 'force_validation');
+                return true;
+            }
+
+            // Parse license file
+            $licenseData = $this->parseLicenseFile($licContent, $publicKey);
+
+            // Extract required fields
+            if (!isset($licenseData['lastCheckedDate']) || !isset($licenseData['forceLicenseValidation'])) {
+                $this->sendIntervalTelemetry('Missing lastCheckedDate or forceLicenseValidation', $licPath, 'force_validation');
+                return true;
+            }
+
+            $lastCheckedDate = $licenseData['lastCheckedDate'];
+            $validationDays = (int)$licenseData['forceLicenseValidation'];
+            $licenseKey = $licenseData['licenseKey'] ?? 'unknown';
+
+            // Parse date
+            $lastChecked = \DateTime::createFromFormat('Y-m-d', $lastCheckedDate);
+            if (!$lastChecked) {
+                $this->sendIntervalTelemetry('Invalid lastCheckedDate format', $licPath, 'force_validation', $licenseKey);
+                return true;
+            }
+
+            // Calculate expiry date
+            $expiryDate = clone $lastChecked;
+            $expiryDate->modify("+{$validationDays} days");
+
+            // Compare with current date
+            $currentDate = new \DateTime();
+            $isPast = $currentDate >= $expiryDate;
+
+            // Send telemetry if force validation period has passed
+            if ($isPast) {
+                $daysOverdue = $currentDate->diff($expiryDate)->days;
+                $this->sendIntervalTelemetry(
+                    "Force validation period expired (overdue by {$daysOverdue} days)",
+                    $licPath,
+                    'force_validation',
+                    $licenseKey
+                );
+            }
+
+            return $isPast;
+
+        } catch (\Exception $e) {
+            // On any error, send telemetry and return true (fail-safe)
+            $this->sendIntervalTelemetry(
+                'Error checking force validation: ' . $e->getMessage(),
+                $licPath ?? 'unknown',
+                'force_validation'
+            );
+            return true;
+        }
+    }
+
+    /**
+     * Send telemetry for interval/validation checks
+     * 
+     * @param string $message Error or status message
+     * @param string $licPath License file path
+     * @param string $checkType Type of check (check_interval or force_validation)
+     * @param string|null $licenseKey Optional license key
+     */
+    private function sendIntervalTelemetry(
+        string $message,
+        string $licPath,
+        string $checkType,
+        ?string $licenseKey = null
+    ): void {
+        try {
+            // Collect system information
+            $systemInfo = $this->collectSystemInfo();
+
+            // Prepare telemetry data
+            $telemetryData = [
+                'text' => $message,
+                'text_data' => ucfirst(str_replace('_', ' ', $checkType)) . ' Failed',
+                'license_key' => $licenseKey ?? 'unknown',
+                'license_file_path' => $licPath,
+                'check_type' => $checkType,
+                'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+                'server_ip' => $systemInfo['server_ip'],
+                'server_domain' => $systemInfo['server_domain'],
+                'server_hostname' => $systemInfo['server_hostname'],
+                'os_platform' => $systemInfo['os_platform'],
+                'os_version' => $systemInfo['os_version'],
+                'runtime_version' => $systemInfo['runtime_version'],
+            ];
+
+            // Add system details if available
+            if (!empty($systemInfo['system_details'])) {
+                $telemetryData['system_details'] = $systemInfo['system_details'];
+            }
+
+            // Send telemetry (fire-and-forget)
+            $this->httpClient->post('/v1/telemetry', $telemetryData);
+        } catch (\Exception $e) {
+            // Silent fail for telemetry
+        }
     }
 }

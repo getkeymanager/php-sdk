@@ -51,6 +51,9 @@ final class ApiResponseCode
 
     // Get License Key Details [500-549]
     public const ACTIVE_LICENSE_FOUND = 500;
+    public const LICENSE_KEY_NOT_FOUND_DETAILS = 501;
+    public const LICENSE_FILE_RETRIEVED = 502;
+    public const LICENSE_FILE_GENERATION_FAILED = 503;
 
     // Delete Product [550-599]
     public const PRODUCT_DELETED = 550;
@@ -225,6 +228,9 @@ final class ApiResponseCode
             self::LICENSE_DEACTIVATED => 'License key deactivated',
             self::LICENSE_ALREADY_INACTIVE => 'License key already inactive',
             self::ACTIVE_LICENSE_FOUND => 'Active license key found',
+            self::LICENSE_KEY_NOT_FOUND_DETAILS => 'License key not found',
+            self::LICENSE_FILE_RETRIEVED => 'License file retrieved successfully',
+            self::LICENSE_FILE_GENERATION_FAILED => 'Failed to generate license file',
             self::DOWNLOADS => 'Downloads',
             self::FILE_NOT_EXISTS => "The request file doesn't exist",
             self::NO_PERMISSION_FILE => "You don't have permission to access it",
@@ -322,6 +328,9 @@ final class ApiResponseCode
             self::LICENSE_ACTIVATED,
             self::LICENSE_DEACTIVATED,
             self::ACTIVE_LICENSE_FOUND,
+            self::LICENSE_KEY_NOT_FOUND_DETAILS,
+            self::LICENSE_FILE_RETRIEVED,
+            self::LICENSE_FILE_GENERATION_FAILED,
             self::DOWNLOADS,
             self::LICENSE_KEY_ASSIGNED,
             self::LICENSE_KEYS_ASSIGNED,
