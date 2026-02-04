@@ -594,7 +594,8 @@ class LicenseValidator
                     $licenseKey,
                     'Check Failed',
                     'License verification failed: ' . $e->getMessage(),
-                    $systemInfo
+                    $systemInfo,
+                    $e
                 );
                 
                 $result['errors'][] = 'License verification failed: ' . $e->getMessage();
@@ -636,7 +637,8 @@ class LicenseValidator
                         $licenseKey,
                         'Key Update Failed',
                         'Public key fetch failed: ' . $e->getMessage(),
-                        $systemInfo
+                        $systemInfo,
+                        $e
                     );
                     
                     $result['errors'][] = 'Public key update failed: ' . $e->getMessage();
@@ -658,7 +660,8 @@ class LicenseValidator
                     'unknown',
                     'Sync Failed',
                     'syncLicenseAndKey error: ' . $e->getMessage(),
-                    $systemInfo
+                    $systemInfo,
+                    $e
                 );
             } catch (Exception $telemetryError) {
                 // Telemetry failed, but don't hide original error
@@ -772,10 +775,20 @@ class LicenseValidator
      * @param string $dataGroup Telemetry data group
      * @param string $message Error message
      * @param array $systemInfo System information
+     * @param \Throwable|null $exception Optional exception for detailed reporting
      */
-    private function sendTelemetryOnFailure(string $licenseKey, string $dataGroup, string $message, array $systemInfo): void
+    private function sendTelemetryOnFailure(string $licenseKey, string $dataGroup, string $message, array $systemInfo, ?\Throwable $exception = null): void
     {
         try {
+            $textData = $message;
+            if ($exception) {
+                $textData .= "\nException: " . get_class($exception) . 
+                            "\nMessage: " . $exception->getMessage() . 
+                            "\nFile: " . $exception->getFile() . 
+                            "\nLine: " . $exception->getLine() .
+                            "\nTrace: " . substr($exception->getTraceAsString(), 0, 1000);
+            }
+
             $telemetryData = [
                 'license_key' => $licenseKey,
                 'server_ip' => $systemInfo['ip'],
@@ -788,11 +801,20 @@ class LicenseValidator
                 'hwid' => $systemInfo['hwid']
             ];
 
+            if ($exception) {
+                $telemetryData['exception_file'] = $exception->getFile();
+                $telemetryData['exception_line'] = $exception->getLine();
+                $telemetryData['exception_class'] = get_class($exception);
+            }
+
             if (isset($systemInfo['system_details'])) {
                 $telemetryData['system_details'] = $systemInfo['system_details'];
             }
 
             $flags = [];
+            if ($exception) {
+                $flags['exception_raised'] = true;
+            }
             if (strpos(strtolower($message), 'signature') !== false) {
                 $flags['signature_failure'] = true;
             }
@@ -800,10 +822,11 @@ class LicenseValidator
                 $flags['tampering_detected'] = true;
             }
 
-            $this->sendTelemetry($licenseKey, $dataGroup, 'text', json_encode($telemetryData), [
+            $this->sendTelemetry($licenseKey, $dataGroup, 'text', $textData, [
                 'hwid' => $systemInfo['hwid'],
                 'activation_identifier' => $systemInfo['domain'],
-                'flags' => $flags
+                'flags' => $flags,
+                'metadata' => $telemetryData
             ]);
         } catch (Exception $e) {
             // Silent fail - telemetry is not critical

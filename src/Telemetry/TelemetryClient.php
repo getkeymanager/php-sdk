@@ -42,7 +42,7 @@ class TelemetryClient
      * @param string $dataType Data type: numeric-single-value, numeric-xy-axis, or text
      * @param string $dataGroup Data group/category
      * @param array $dataValues Data values based on type
-     * @param array $options Optional parameters (license_key, activation_identifier, user_identifier, product_id, product_version)
+     * @param array $options Optional parameters (license_key, activation_identifier, user_identifier, product_id, product_version, hwid, country, flags, metadata)
      * @return array Result
      */
     public function sendTelemetry(
@@ -102,6 +102,18 @@ class TelemetryClient
             }
             if (!empty($options['product_version'])) {
                 $data['product_version'] = $options['product_version'];
+            }
+            if (!empty($options['hwid'])) {
+                $data['hwid'] = $options['hwid'];
+            }
+            if (!empty($options['country'])) {
+                $data['country'] = $options['country'];
+            }
+            if (!empty($options['flags'])) {
+                $data['flags'] = $options['flags'];
+            }
+            if (!empty($options['metadata'])) {
+                $data['metadata'] = $options['metadata'];
             }
 
             $response = $this->httpClient->request('POST', '/v1/send-telemetry', $data);
