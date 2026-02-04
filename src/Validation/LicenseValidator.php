@@ -11,11 +11,11 @@ use GetKeyManager\SDK\StateStore;
 use GetKeyManager\SDK\StateResolver;
 use GetKeyManager\SDK\SignatureVerifier;
 use GetKeyManager\SDK\LicenseState;
-use GetKeyManager\SDK\LicenseException;
-use GetKeyManager\SDK\ValidationException;
-use GetKeyManager\SDK\SignatureException;
-use GetKeyManager\SDK\NetworkException;
-use GetKeyManager\SDK\StateException;
+use GetKeyManager\SDK\Exceptions\LicenseException;
+use GetKeyManager\SDK\Exceptions\ValidationException;
+use GetKeyManager\SDK\Exceptions\SignatureException;
+use GetKeyManager\SDK\Exceptions\NetworkException;
+use GetKeyManager\SDK\Exceptions\StateException;
 use InvalidArgumentException;
 use Exception;
 
@@ -670,6 +670,50 @@ class LicenseValidator
     }
 
     /**
+     * Send telemetry data
+     * 
+     * @param string $licenseKey License key
+     * @param string $dataGroup Telemetry data group (e.g., 'security', 'usage', 'performance')
+     * @param string $dataType Data type ('numeric-single-value', 'numeric-xy-axis', 'text')
+     * @param mixed $data Data value(s)
+     * @param array $options Optional parameters (hwid, country, flags, metadata, activation_identifier)
+     * @return array Response data
+     */
+    public function sendTelemetry(string $licenseKey, string $dataGroup, string $dataType, $data, array $options = []): array
+    {
+        $systemInfo = $this->collectSystemInformation();
+        
+        $payload = [
+            'license_key' => $licenseKey,
+            'data_group' => $dataGroup,
+            'data_type' => $dataType,
+            'hwid' => $options['hwid'] ?? $systemInfo['hwid'],
+            'country' => $options['country'] ?? null,
+            'activation_identifier' => $options['activation_identifier'] ?? $systemInfo['domain'],
+            'user_identifier' => $options['user_identifier'] ?? null,
+            'product_version' => $options['product_version'] ?? $this->config->getVersion(),
+            'flags' => $options['flags'] ?? [],
+            'metadata' => $options['metadata'] ?? [],
+        ];
+
+        // Map data based on type
+        switch ($dataType) {
+            case 'numeric-single-value':
+                $payload['numeric_data_single_value'] = $data;
+                break;
+            case 'numeric-xy-axis':
+                $payload['numeric_data_x'] = $data['x'] ?? null;
+                $payload['numeric_data_y'] = $data['y'] ?? null;
+                break;
+            case 'text':
+                $payload['text_data'] = is_string($data) ? $data : json_encode($data);
+                break;
+        }
+
+        return $this->httpClient->request('POST', '/v1/telemetry', $payload);
+    }
+
+    /**
      * Collect system information for telemetry
      * 
      * @return array System information
@@ -682,11 +726,12 @@ class LicenseValidator
             'hostname' => '',
             'os' => PHP_OS,
             'php_version' => PHP_VERSION,
-            'timestamp' => date('Y-m-d H:i:s')
+            'timestamp' => date('Y-m-d H:i:s'),
+            'hwid' => ''
         ];
 
         // Get server IP
-        $info['ip'] = $_SERVER['SERVER_ADDR'] ?? $_SERVER['LOCAL_ADDR'] ?? gethostbyname(gethostname());
+        $info['ip'] = $_SERVER['SERVER_ADDR'] ?? $_SERVER['LOCAL_ADDR'] ?? gethostbyname(gethostname() ?: 'localhost');
 
         // Get domain
         $info['domain'] = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? gethostname();
@@ -713,6 +758,10 @@ class LicenseValidator
             }
         }
 
+        // Generate HWID
+        $hwidData = $info['hostname'] . $info['os'] . ($info['system_details'] ?? '') . $info['ip'];
+        $info['hwid'] = hash('sha256', $hwidData);
+
         return $info;
     }
 
@@ -735,22 +784,27 @@ class LicenseValidator
                 'os' => $systemInfo['os'],
                 'php_version' => $systemInfo['php_version'],
                 'timestamp' => $systemInfo['timestamp'],
-                'error_message' => $message
+                'error_message' => $message,
+                'hwid' => $systemInfo['hwid']
             ];
 
             if (isset($systemInfo['system_details'])) {
                 $telemetryData['system_details'] = $systemInfo['system_details'];
             }
 
-            $payload = [
-                'data_type' => 'text',
-                'data_group' => $dataGroup,
-                'text_data' => json_encode($telemetryData),
-                'license_key' => $licenseKey
-            ];
+            $flags = [];
+            if (strpos(strtolower($message), 'signature') !== false) {
+                $flags['signature_failure'] = true;
+            }
+            if (strpos(strtolower($message), 'tamper') !== false) {
+                $flags['tampering_detected'] = true;
+            }
 
-            // Send telemetry (fire and forget - don't throw on failure)
-            $this->httpClient->request('POST', '/v1/telemetry', $payload);
+            $this->sendTelemetry($licenseKey, $dataGroup, 'text', json_encode($telemetryData), [
+                'hwid' => $systemInfo['hwid'],
+                'activation_identifier' => $systemInfo['domain'],
+                'flags' => $flags
+            ]);
         } catch (Exception $e) {
             // Silent fail - telemetry is not critical
         }

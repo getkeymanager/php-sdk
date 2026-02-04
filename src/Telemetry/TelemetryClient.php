@@ -6,7 +6,7 @@ namespace GetKeyManager\SDK\Telemetry;
 
 use GetKeyManager\SDK\Config\Configuration;
 use GetKeyManager\SDK\Http\HttpClient;
-use GetKeyManager\SDK\LicenseException;
+use GetKeyManager\SDK\Exceptions\LicenseException;
 use InvalidArgumentException;
 use Exception;
 

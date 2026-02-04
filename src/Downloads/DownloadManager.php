@@ -7,7 +7,7 @@ namespace GetKeyManager\SDK\Downloads;
 use GetKeyManager\SDK\Config\Configuration;
 use GetKeyManager\SDK\Http\HttpClient;
 use GetKeyManager\SDK\Cache\CacheManager;
-use GetKeyManager\SDK\LicenseException;
+use GetKeyManager\SDK\Exceptions\LicenseException;
 use InvalidArgumentException;
 
 /**
