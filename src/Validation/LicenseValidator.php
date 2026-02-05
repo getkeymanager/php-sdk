@@ -11,6 +11,12 @@ use GetKeyManager\SDK\StateStore;
 use GetKeyManager\SDK\StateResolver;
 use GetKeyManager\SDK\SignatureVerifier;
 use GetKeyManager\SDK\LicenseState;
+use GetKeyManager\SDK\Dto\LicenseDataDto;
+use GetKeyManager\SDK\Dto\ValidationResultDto;
+use GetKeyManager\SDK\Dto\ActivationResultDto;
+use GetKeyManager\SDK\Dto\SyncResultDto;
+use GetKeyManager\SDK\Constants\OptionKeys;
+use GetKeyManager\SDK\Constants\ValidationType;
 use GetKeyManager\SDK\Exceptions\LicenseException;
 use GetKeyManager\SDK\Exceptions\ValidationException;
 use GetKeyManager\SDK\Exceptions\SignatureException;
@@ -62,46 +68,169 @@ class LicenseValidator
     }
 
     /**
-     * Validate a license key online
+     * Validate a License with Smart Offline-First or Force API Strategy
      * 
-     * @param string $licenseKey License key to validate
-     * @param array $options Optional parameters (hardwareId, domain, productId)
-     * @return array Validation result
-     * @throws LicenseException
+     * MANDATORY PARAMETERS:
+     * @param string $licenseKey License key (e.g., "LIC-2024-ABCD1234")
+     * @param string $identifier Domain or hardware ID (domain binding or hardware binding)
+     *
+     * OPTIONAL PARAMETERS:
+     * @param ?string $publicKey Product RSA public key for offline .lic validation
+     *                             If not provided, inherits from Configuration::getProductPublicKey()
+     *                             Required for offline-first validation; not needed for force API
+     * @param bool $force ValidationType::FORCE_API (true) forces API call; 
+     *                     ValidationType::OFFLINE_FIRST (false, default) tries offline first
+     * @param array $options Optional request parameters (see OptionKeys class for valid keys)
+     *                        - CACHE_TTL: Cache time-to-live in seconds
+     *                        - TIMEOUT: HTTP request timeout in seconds
+     *                        - METADATA: Additional metadata as associative array
+     *                        - NO_CACHE: Set to true to skip cache
+     * 
+     * RETURN:
+     * @return ValidationResultDto Type-safe validation result with license data
+     *
+     * EXAMPLES:
+     * 
+     * Fresh Install (force API):
+     * ```php
+     * $config = new Configuration(['productPublicKey' => $publicKey, 'licenseFilePath' => '/lic']);
+     * $validator = new LicenseValidator($config, ...);
+     * $result = $validator->validateLicense(
+     *     'LIC-2024-ABC123',           // MANDATORY
+     *     'example.com',                // MANDATORY identifier
+     *     null,                         // OPTIONAL publicKey (inherits from config)
+     *     ValidationType::FORCE_API     // OPTIONAL force=true for fresh install
+     * );
+     * if ($result->isSuccess()) {
+     *     echo "License valid: " . $result->getLicense()->license_key;
+     * }
+     * ```
+     *
+     * Subsequent Calls (offline-first, default):
+     * ```php
+     * $result = $validator->validateLicense(
+     *     'LIC-2024-ABC123',                      // MANDATORY
+     *     'example.com',                          // MANDATORY identifier
+     *     null,                                   // OPTIONAL (inherits)
+     *     ValidationType::OFFLINE_FIRST           // OPTIONAL false = default behavior
+     * );
+     * ```
+     * 
+     * @throws InvalidArgumentException If required parameters are invalid (empty licenseKey or identifier)
+     * @throws LicenseException If validation fails and no fallback available
+     * @throws ValidationException If signature verification fails during offline validation
      */
-    public function validateLicense(string $licenseKey, array $options = []): array
-    {
+    public function validateLicense(
+        string $licenseKey,
+        string $identifier,
+        ?string $publicKey = null,
+        bool $force = ValidationType::OFFLINE_FIRST,
+        array $options = []
+    ): ValidationResultDto {
         $this->validateLicenseKey($licenseKey);
 
-        $cacheKey = $this->cacheManager->generateKey('license', $licenseKey, 'validation');
-        if ($cached = $this->cacheManager->get($cacheKey)) {
-            return $cached;
+        if (empty($identifier)) {
+            throw new InvalidArgumentException(
+                'Identifier (domain or hardware ID) is required for license validation. ' .
+                'Please provide a domain name (web apps) or hardware ID (desktop/server). ' .
+                'Example: $validator->validateLicense("LIC-KEY", "example.com") or ' .
+                '$validator->validateLicense("LIC-KEY", $hardwareId). ' .
+                'See: https://docs.getkeymanager.com/php-sdk#identifiers'
+            );
         }
 
-        $payload = array_merge(['license_key' => $licenseKey], $options);
-        
-        $response = $this->httpClient->request('POST', '/v1/verify', $payload);
+        // Determine validation strategy
+        $useOfflineFirst = ($force === ValidationType::OFFLINE_FIRST);
 
-        $this->cacheManager->set($cacheKey, $response);
+        // If offline-first and public key available, try offline first
+        if ($useOfflineFirst && $publicKey) {
+            try {
+                $offlineResult = $this->attemptOfflineValidation($licenseKey, $publicKey, $identifier, $options);
+                if ($offlineResult !== null) {
+                    return $offlineResult;
+                }
+            } catch (Exception $e) {
+                // Offline validation failed, fall through to API
+            }
+        }
 
-        return $response;
+        // API validation
+        try {
+            $cacheKey = $this->cacheManager->generateKey('license', $licenseKey, 'validation');
+            
+            if (!isset($options[OptionKeys::NO_CACHE]) && ($cached = $this->cacheManager->get($cacheKey))) {
+                return ValidationResultDto::fromResponse($cached);
+            }
+
+            $payload = array_merge(['license_key' => $licenseKey, 'identifier' => $identifier], $options);
+            
+            $response = $this->httpClient->request('POST', '/v1/verify', $payload);
+
+            if (!isset($options[OptionKeys::NO_CACHE])) {
+                $this->cacheManager->set($cacheKey, $response);
+            }
+
+            return ValidationResultDto::fromResponse($response);
+        } catch (Exception $e) {
+            throw new LicenseException(
+                'License validation failed: ' . $e->getMessage() . '. ' .
+                'This may indicate a network issue, invalid license key, or server error. ' .
+                'If the problem persists, please contact support with error details.',
+                0,
+                $e
+            );
+        }
     }
 
     /**
-     * Resolve License State (Hardened Validation)
+     * Resolve License State with Smart Offline-First Validation
      * 
      * Returns a LicenseState object that provides unified access to license status,
-     * capabilities, and feature gates. This method implements the hardened validation
-     * with signature verification and grace period support.
+     * capabilities, and feature gates. This method implements hardened validation with
+     * signature verification and grace period support.
      * 
-     * @param string $licenseKey License key to validate
-     * @param array $options Optional parameters (hardwareId, domain, productId)
-     * @return LicenseState License state object
+     * MANDATORY PARAMETERS:
+     * @param string $licenseKey License key (e.g., "LIC-2024-ABCD1234")
+     * @param string $identifier Domain or hardware ID
+     *
+     * OPTIONAL PARAMETERS:
+     * @param ?string $publicKey Product RSA public key (optional if configured)
+     * @param bool $force ValidationType::FORCE_API or ValidationType::OFFLINE_FIRST (default)
+     * @param array $options Optional parameters (CACHE_TTL, TIMEOUT, METADATA, NO_CACHE)
+     * 
+     * @return LicenseState License state object for capability checking
      * @throws LicenseException
+     * @throws NetworkException With grace period fallback if configured
+     * 
+     * EXAMPLE:
+     * ```php
+     * try {
+     *     $state = $validator->resolveLicenseState(
+     *         'LIC-2024-ABC123',
+     *         'example.com'
+     *     );
+     *     echo "License status: " . $state->getState();
+     * } catch (NetworkException $e) {
+     *     // Network error - grace period may be available
+     * }
+     * ```
      */
-    public function resolveLicenseState(string $licenseKey, array $options = []): LicenseState
-    {
+    public function resolveLicenseState(
+        string $licenseKey,
+        string $identifier,
+        ?string $publicKey = null,
+        bool $force = ValidationType::OFFLINE_FIRST,
+        array $options = []
+    ): LicenseState {
         $this->validateLicenseKey($licenseKey);
+
+        if (empty($identifier)) {
+            throw new InvalidArgumentException(
+                'Identifier (domain or hardware ID) is required for state resolution. ' .
+                'Use a domain name (web apps) or hardware ID (desktop/server). ' .
+                'See: https://docs.getkeymanager.com/php-sdk#identifiers'
+            );
+        }
 
         // Try to get from StateStore first
         $stateKey = $this->stateStore->getValidationKey($licenseKey);
@@ -122,8 +251,16 @@ class LicenseValidator
 
         // Perform validation
         try {
-            $response = $this->validateLicense($licenseKey, $options);
-            $licenseState = $this->stateResolver->resolveFromValidation($response, $licenseKey);
+            $validationResult = $this->validateLicense($licenseKey, $identifier, $publicKey, $force, $options);
+            
+            if (!$validationResult->isSuccess()) {
+                throw new LicenseException(
+                    'Validation failed: ' . $validationResult->getMessage(),
+                    $validationResult->getCode()
+                );
+            }
+
+            $licenseState = $this->stateResolver->resolveFromValidation($validationResult->toArray(), $licenseKey);
             
             // Store in StateStore
             if ($this->config->isCacheEnabled()) {
@@ -151,20 +288,49 @@ class LicenseValidator
     }
 
     /**
-     * Check if a feature is allowed (State-Based)
+     * Check if a Feature is Allowed (State-Based Authorization)
      * 
-     * This method uses LicenseState for feature checking with proper
-     * capability resolution.
+     * Validates license state and checks if the specified feature is allowed.
+     * Uses offline-first validation by default for performance.
      * 
+     * MANDATORY PARAMETERS:
      * @param string $licenseKey License key
-     * @param string $feature Feature name
-     * @return bool True if feature is allowed
-     * @throws LicenseException
+     * @param string $feature Feature name (e.g., 'updates', 'advanced_settings', 'api_access')
+     * @param string $identifier Domain or hardware ID
+     *
+     * OPTIONAL PARAMETERS:
+     * @param ?string $publicKey Product RSA public key (optional if configured)
+     * @param bool $force ValidationType::FORCE_API or ValidationType::OFFLINE_FIRST (default)
+     * @param array $options Optional parameters (CACHE_TTL, TIMEOUT, METADATA, NO_CACHE)
+     * 
+     * @return bool True if feature is allowed; false if denied or license invalid
+     * 
+     * EXAMPLE:
+     * ```php
+     * if ($validator->isFeatureAllowed('LIC-2024-ABC123', 'api_access', 'example.com')) {
+     *     // Feature is allowed
+     *     enableApiAccess();
+     * } else {
+     *     // Feature not available
+     *     showUpgradePrompt();
+     * }
+     * ```
      */
-    public function isFeatureAllowed(string $licenseKey, string $feature): bool
-    {
-        $licenseState = $this->resolveLicenseState($licenseKey);
-        return $licenseState->allows($feature);
+    public function isFeatureAllowed(
+        string $licenseKey,
+        string $feature,
+        string $identifier,
+        ?string $publicKey = null,
+        bool $force = ValidationType::OFFLINE_FIRST,
+        array $options = []
+    ): bool {
+        try {
+            $licenseState = $this->resolveLicenseState($licenseKey, $identifier, $publicKey, $force, $options);
+            return $licenseState->allows($feature);
+        } catch (Exception $e) {
+            // Feature denied on any validation error
+            return false;
+        }
     }
 
     /**
@@ -230,86 +396,231 @@ class LicenseValidator
     }
 
     /**
-     * Activate a license on a device or domain
+     * Activate License on a Device or Domain
      * 
-     * @param string $licenseKey License key
-     * @param array $options Activation options (hardwareId OR domain required)
-     * @return array Activation result
-     * @throws LicenseException
+     * Creates a new activation for the license on the specified identifier
+     * (domain or hardware). Returns cryptographically signed activation confirmation.
+     * 
+     * MANDATORY PARAMETERS:
+     * @param string $licenseKey License key (e.g., "LIC-2024-ABC123")
+     * @param string $identifier Domain (for web) or hardware ID (for desktop/on-premises)
+     *
+     * OPTIONAL PARAMETERS:
+     * @param ?string $publicKey Product RSA public key (optional if configured)
+     * @param array $options Optional activation parameters
+     *                        - IDEMPOTENCY_KEY: UUID for idempotent requests (auto-generated if omitted)
+     *                        - OS: Operating system
+     *                        - PRODUCT_VERSION: Product version string
+     *                        - IP: Client IP address
+     *                        - DOMAIN: Activation domain (if different from identifier)
+     *                        - METADATA: Additional metadata
+     * 
+     * @return ActivationResultDto Type-safe activation result with activation_id and license data
+     * @throws InvalidArgumentException If identifier is empty
+     * @throws LicenseException If activation fails
+     * 
+     * EXAMPLE:
+     * ```php
+     * $result = $validator->activateLicense(
+     *     'LIC-2024-ABC123',
+     *     'workstation-01.example.com',
+     *     null,
+     *     [
+     *         OptionKeys::OS => 'Windows 11 Pro',
+     *         OptionKeys::PRODUCT_VERSION => '2.5.1'
+     *     ]
+     * );
+     * 
+     * if ($result->isSuccess()) {
+     *     echo "Activated as: " . $result->getActivationId();
+     * } else {
+     *     echo "Activation failed: " . $result->getMessage();
+     * }
+     * ```
      */
-    public function activateLicense(string $licenseKey, array $options = []): array
-    {
+    public function activateLicense(
+        string $licenseKey,
+        string $identifier,
+        ?string $publicKey = null,
+        array $options = []
+    ): ActivationResultDto {
         $this->validateLicenseKey($licenseKey);
 
-        if (!isset($options['hardwareId']) && !isset($options['domain'])) {
-            throw new InvalidArgumentException('Either hardwareId or domain is required');
+        if (empty($identifier)) {
+            throw new InvalidArgumentException(
+                'Identifier (domain or hardware ID) is required for license activation. ' .
+                'For web apps, use the domain (e.g., "example.com"). ' .
+                'For desktop/server, use hardware ID. ' .
+                'Example: $validator->activateLicense("LIC-KEY", "workstation-01.example.com"). ' .
+                'See: https://docs.getkeymanager.com/php-sdk#activation'
+            );
         }
 
-        $payload = array_merge(['license_key' => $licenseKey], $options);
+        $payload = array_merge([
+            'license_key' => $licenseKey,
+            'identifier' => $identifier
+        ], $options);
 
-        $idempotencyKey = $options['idempotencyKey'] ?? $this->generateUuid();
+        $idempotencyKey = $options[OptionKeys::IDEMPOTENCY_KEY] ?? $this->generateUuid();
         
-        $response = $this->httpClient->request(
-            'POST',
-            '/v1/activate',
-            $payload,
-            ['Idempotency-Key' => $idempotencyKey]
-        );
+        try {
+            $response = $this->httpClient->request(
+                'POST',
+                '/v1/activate',
+                $payload,
+                ['Idempotency-Key' => $idempotencyKey]
+            );
 
-        $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
+            $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
 
-        return $response;
+            return ActivationResultDto::fromResponse($response);
+        } catch (Exception $e) {
+            throw new LicenseException(
+                'License activation failed: ' . $e->getMessage() . '. ' .
+                'Possible causes: license already activated, activation limit reached, or network issue. ' .
+                'Ensure the identifier matches the deployment target.',
+                0,
+                $e
+            );
+        }
     }
 
     /**
-     * Deactivate a license from a device or domain
+     * Deactivate License from a Device or Domain
      * 
+     * Removes the activation from the specified identifier. The license remains valid
+     * for other activations or for reactivation on the same identifier later.
+     * 
+     * MANDATORY PARAMETERS:
      * @param string $licenseKey License key
-     * @param array $options Deactivation options
-     * @return array Deactivation result
-     * @throws LicenseException
+     * @param string $identifier Domain or hardware ID to deactivate from
+     *
+     * OPTIONAL PARAMETERS:
+     * @param array $options Optional deactivation parameters
+     *                        - IDEMPOTENCY_KEY: UUID for idempotent requests (auto-generated if omitted)
+     *                        - METADATA: Additional metadata
+     * 
+     * @return ActivationResultDto Type-safe deactivation result
+     * @throws InvalidArgumentException If identifier is empty
+     * @throws LicenseException If deactivation fails
+     * 
+     * EXAMPLE:
+     * ```php
+     * $result = $validator->deactivateLicense(
+     *     'LIC-2024-ABC123',
+     *     'workstation-01.example.com'
+     * );
+     * 
+     * if ($result->isSuccess()) {
+     *     echo "Deactivated successfully";
+     * }
+     * ```
      */
-    public function deactivateLicense(string $licenseKey, array $options = []): array
-    {
+    public function deactivateLicense(
+        string $licenseKey,
+        string $identifier,
+        array $options = []
+    ): ActivationResultDto {
         $this->validateLicenseKey($licenseKey);
 
-        $payload = array_merge(['license_key' => $licenseKey], $options);
+        if (empty($identifier)) {
+            throw new InvalidArgumentException(
+                'Identifier is required for deactivation. ' .
+                'Must match the identifier used during activation. ' .
+                'Example: $validator->deactivateLicense("LIC-KEY", "workstation-01.example.com")'
+            );
+        }
 
-        $idempotencyKey = $options['idempotencyKey'] ?? $this->generateUuid();
+        $payload = array_merge([
+            'license_key' => $licenseKey,
+            'identifier' => $identifier
+        ], $options);
 
-        $response = $this->httpClient->request(
-            'POST',
-            '/v1/deactivate',
-            $payload,
-            ['Idempotency-Key' => $idempotencyKey]
-        );
+        $idempotencyKey = $options[OptionKeys::IDEMPOTENCY_KEY] ?? $this->generateUuid();
 
-        $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
+        try {
+            $response = $this->httpClient->request(
+                'POST',
+                '/v1/deactivate',
+                $payload,
+                ['Idempotency-Key' => $idempotencyKey]
+            );
 
-        return $response;
+            $this->cacheManager->clearByPattern("license:{$licenseKey}:*");
+
+            return ActivationResultDto::fromResponse($response);
+        } catch (Exception $e) {
+            throw new LicenseException(
+                'License deactivation failed: ' . $e->getMessage() . '. ' .
+                'Verify the identifier matches an active activation.',
+                0,
+                $e
+            );
+        }
     }
 
     /**
-     * Get license file content for offline validation
+     * Get License File for Offline Validation
      * 
      * Retrieve .lic file content for offline license validation. Returns base64 encoded 
      * license file with cryptographic signature that can be verified offline using 
      * the product's public key.
      * 
+     * MANDATORY PARAMETERS:
      * @param string $licenseKey License key
-     * @param array $options Optional parameters (identifier for hardware-bound licenses)
-     * @return array License file result with licFileContent
-     * @throws LicenseException
+     * @param string $identifier Domain or hardware ID (for hardware-bound licenses)
+     *
+     * OPTIONAL PARAMETERS:
+     * @param array $options Optional parameters
+     *                        - METADATA: Additional metadata
+     * 
+     * @return array License file result with licFileContent (base64 encoded)
+     * @throws InvalidArgumentException If identifier is empty
+     * @throws LicenseException If file retrieval fails
+     * 
+     * EXAMPLE:
+     * ```php
+     * $result = $validator->getLicenseFile(
+     *     'LIC-2024-ABC123',
+     *     'example.com'
+     * );
+     * 
+     * if (isset($result['licFileContent'])) {
+     *     file_put_contents('/app/license.lic', $result['licFileContent']);
+     * }
+     * ```
      */
-    public function getLicenseFile(string $licenseKey, array $options = []): array
-    {
+    public function getLicenseFile(
+        string $licenseKey,
+        string $identifier,
+        array $options = []
+    ): array {
         $this->validateLicenseKey($licenseKey);
 
-        $payload = array_merge(['license_key' => $licenseKey], $options);
+        if (empty($identifier)) {
+            throw new InvalidArgumentException(
+                'Identifier is required to retrieve license file. ' .
+                'This ensures the correct .lic file for your hardware or domain is downloaded. ' .
+                'Example: $validator->getLicenseFile("LIC-KEY", "example.com")'
+            );
+        }
 
-        $response = $this->httpClient->request('POST', '/v1/get-license-file', $payload);
+        $payload = array_merge([
+            'license_key' => $licenseKey,
+            'identifier' => $identifier
+        ], $options);
 
-        return $response;
+        try {
+            $response = $this->httpClient->request('POST', '/v1/get-license-file', $payload);
+            return $response;
+        } catch (Exception $e) {
+            throw new LicenseException(
+                'Failed to retrieve license file: ' . $e->getMessage() . '. ' .
+                'Ensure license is valid and the identifier is correct.',
+                0,
+                $e
+            );
+        }
     }
 
     /**
@@ -416,11 +727,7 @@ class LicenseValidator
                 );
             }
 
-            // Split into chunks (256 bytes for RSA-2048/4096)
-            $chunks = str_split($encryptedData, 256);
-            $decrypted = '';
-
-            // Verify public key is valid
+            // Verify public key is valid and get details to determine block size
             $keyResource = openssl_pkey_get_public($publicKey);
             if ($keyResource === false) {
                 $opensslError = openssl_error_string() ?: 'Unknown OpenSSL error';
@@ -430,6 +737,21 @@ class LicenseValidator
                 );
             }
 
+            $keyDetails = openssl_pkey_get_details($keyResource);
+            if ($keyDetails === false) {
+                throw new ValidationException('Failed to get public key details', 'INVALID_PUBLIC_KEY');
+            }
+
+            // RSA block size is key_bits / 8
+            $blockSize = $keyDetails['bits'] / 8;
+            if ($blockSize <= 0) {
+                $blockSize = 256; // Fallback to 2048-bit size
+            }
+
+            // Split into chunks based on key size (e.g., 256 for 2048-bit, 512 for 4096-bit)
+            $chunks = str_split($encryptedData, $blockSize);
+            $decrypted = '';
+
             // Decrypt each chunk
             foreach ($chunks as $index => $chunk) {
                 $partial = '';
@@ -438,7 +760,7 @@ class LicenseValidator
                 $decryptionOk = openssl_public_decrypt(
                     $chunk,
                     $partial,
-                    $publicKey,
+                    $keyResource, // Use resource instead of string for efficiency
                     OPENSSL_PKCS1_PADDING
                 );
 
@@ -491,42 +813,85 @@ class LicenseValidator
     }
 
     /**
-     * Synchronize license and key files with server
+     * Synchronize License and Key Files with Server
      * 
-     * This function:
-     * 1. Parses local .lic file using parseLicenseFile()
-     * 2. Verifies license with server via POST /v1/verify
-     * 3. Updates .lic file if verification successful
-     * 4. Fetches and updates .key file from server
-     * 5. Sends telemetry on failures for piracy detection
+     * Atomically updates local .lic and .key files with latest data from server.
+     * Performs offline validation of local file, then updates both files if verification succeeds.
      * 
-     * @param string $licPath Path to local .lic file
-     * @param string $keyPath Path to local .key/.pem file
-     * @return array Result with keys: success, licenseUpdated, keyUpdated, errors[], warnings[]
+     * Process:
+     * 1. Validate local .lic file is readable and properly signed
+     * 2. Verify license with server (POST /v1/verify)
+     * 3. Update .lic file if server provided new content
+     * 4. Fetch and update .key (public key) file from server
+     * 5. Send telemetry on any errors for piracy detection
+     * 
+     * MANDATORY PARAMETERS:
+     * @param string $licPath Absolute path to local .lic file
+     * @param string $keyPath Absolute path to local .key/.pem file
+     *
+     * OPTIONAL PARAMETERS:
+     * @param bool $force If true, force fresh sync; if false (default), check license first
+     * 
+     * @return SyncResultDto Result object with detailed success/error tracking
+     *                        - isSuccess(): true if both files synced successfully
+     *                        - isLicenseUpdated(): true if .lic file was updated
+     *                        - isKeyUpdated(): true if .key file was updated
+     *                        - getErrors(): array of error messages
+     *                        - getWarnings(): array of warning messages
+     *                        - getSummary(): Human-readable status string
+     * 
+     * @throws Exception If file paths are invalid or unreadable
+     * 
+     * EXAMPLE - Periodic Sync (from cron or background job):
+     * ```php
+     * $result = $validator->syncLicenseAndKey(
+     *     '/var/app/license.lic',
+     *     '/var/app/license.key'
+     * );
+     * 
+     * if ($result->isSuccess()) {
+     *     log("License sync successful");
+     *     if ($result->isLicenseUpdated()) {
+     *         log("License file was updated");
+     *     }
+     * } else {
+     *     log("License sync failed: " . $result->getFirstError());
+     * }
+     * ```
+     * 
+     * EXAMPLE - Force Immediate Sync (during setup):
+     * ```php
+     * $result = $validator->syncLicenseAndKey(
+     *     '/var/app/license.lic',
+     *     '/var/app/license.key',
+     *     true  // force=true for immediate critical sync
+     * );
+     * ```
      */
-    public function syncLicenseAndKey(string $licPath, string $keyPath): array
-    {
-        $result = [
-            'success' => false,
-            'licenseUpdated' => false,
-            'keyUpdated' => false,
-            'errors' => [],
-            'warnings' => []
-        ];
+    public function syncLicenseAndKey(
+        string $licPath,
+        string $keyPath,
+        bool $force = false
+    ): SyncResultDto {
+        $result = new SyncResultDto();
 
         try {
             // Step 1: Validate file paths
             if (!file_exists($licPath)) {
-                throw new Exception("License file not found: {$licPath}");
+                $result->addError("License file not found: {$licPath}");
+                return $result;
             }
             if (!is_readable($licPath)) {
-                throw new Exception("License file not readable: {$licPath}");
+                $result->addError("License file not readable: {$licPath}");
+                return $result;
             }
             if (!file_exists($keyPath)) {
-                throw new Exception("Key file not found: {$keyPath}");
+                $result->addError("Key file not found: {$keyPath}");
+                return $result;
             }
             if (!is_readable($keyPath)) {
-                throw new Exception("Key file not readable: {$keyPath}");
+                $result->addError("Key file not readable: {$keyPath}");
+                return $result;
             }
 
             // Read files
@@ -534,10 +899,12 @@ class LicenseValidator
             $publicKey = file_get_contents($keyPath);
 
             if ($licFileContent === false) {
-                throw new Exception("Failed to read license file: {$licPath}");
+                $result->addError("Failed to read license file: {$licPath}");
+                return $result;
             }
             if ($publicKey === false) {
-                throw new Exception("Failed to read key file: {$keyPath}");
+                $result->addError("Failed to read key file: {$keyPath}");
+                return $result;
             }
 
             // Step 2: Parse local .lic file
@@ -546,7 +913,8 @@ class LicenseValidator
             // Extract license key for verification
             $licenseKey = $licenseData['license_key'] ?? $licenseData['key'] ?? null;
             if (!$licenseKey) {
-                throw new Exception("License key not found in .lic file");
+                $result->addError("License key not found in .lic file");
+                return $result;
             }
 
             // Verify product UUID matches
@@ -554,7 +922,8 @@ class LicenseValidator
             $fileProductUuid = $licenseData['product_uuid'] ?? $licenseData['product']['uuid'] ?? null;
             
             if ($configProductUuid && $fileProductUuid && $configProductUuid !== $fileProductUuid) {
-                throw new Exception("Product UUID mismatch. Config: {$configProductUuid}, File: {$fileProductUuid}");
+                $result->addError("Product UUID mismatch. Config: {$configProductUuid}, File: {$fileProductUuid}");
+                return $result;
             }
 
             // Collect system information for telemetry
@@ -577,15 +946,16 @@ class LicenseValidator
 
                 // Check if response is signed
                 if ($this->signatureVerifier && !$this->isResponseSigned($verifyResponse)) {
-                    throw new Exception("Verification response is not properly signed");
+                    $result->addError("Verification response is not properly signed");
+                    return $result;
                 }
 
                 // Step 4: Update .lic file if licFileContent provided
                 if (isset($verifyResponse['licFileContent']) && !empty($verifyResponse['licFileContent'])) {
                     $this->atomicFileWrite($licPath, $verifyResponse['licFileContent']);
-                    $result['licenseUpdated'] = true;
+                    $result->isLicenseUpdated = true;
                 } else {
-                    $result['warnings'][] = "Server did not provide updated license file content";
+                    $result->addWarning("Server did not provide updated license file content");
                 }
 
             } catch (Exception $e) {
@@ -598,13 +968,13 @@ class LicenseValidator
                     $e
                 );
                 
-                $result['errors'][] = 'License verification failed: ' . $e->getMessage();
+                $result->addError('License verification failed: ' . $e->getMessage());
                 return $result;
             }
 
             // Step 5: Fetch updated public key
             if (!$fileProductUuid) {
-                $result['warnings'][] = "Product UUID not found in license file, skipping key update";
+                $result->addWarning("Product UUID not found in license file, skipping key update");
             } else {
                 try {
                     $keyResponse = $this->httpClient->request('GET', '/api/v1/get-product-public-key', [
@@ -613,22 +983,24 @@ class LicenseValidator
 
                     // Check if response is signed
                     if ($this->signatureVerifier && !$this->isResponseSigned($keyResponse)) {
-                        throw new Exception("Public key response is not properly signed");
+                        $result->addError("Public key response is not properly signed");
+                        return $result;
                     }
 
                     // Verify product UUID matches
                     $responseProductUuid = $keyResponse['product']['uuid'] ?? $keyResponse['data']['product_uuid'] ?? null;
                     if ($responseProductUuid && $responseProductUuid !== $fileProductUuid) {
-                        throw new Exception("Product UUID mismatch in key response");
+                        $result->addError("Product UUID mismatch in key response");
+                        return $result;
                     }
 
                     // Step 6: Update .key file atomically
                     $newPublicKey = $keyResponse['public_key'] ?? $keyResponse['data']['public_key'] ?? null;
                     if ($newPublicKey && !empty($newPublicKey)) {
                         $this->atomicFileWrite($keyPath, $newPublicKey);
-                        $result['keyUpdated'] = true;
+                        $result->isKeyUpdated = true;
                     } else {
-                        $result['warnings'][] = "Server did not provide public key";
+                        $result->addWarning("Server did not provide public key");
                     }
 
                 } catch (Exception $e) {
@@ -641,17 +1013,17 @@ class LicenseValidator
                         $e
                     );
                     
-                    $result['errors'][] = 'Public key update failed: ' . $e->getMessage();
+                    $result->addError('Public key update failed: ' . $e->getMessage());
                     // Don't return here - license was updated successfully
                 }
             }
 
-            $result['success'] = true;
+            $result->success = true;
             return $result;
 
         } catch (Exception $e) {
             // Catch-all for any unexpected errors
-            $result['errors'][] = $e->getMessage();
+            $result->addError($e->getMessage());
             
             // Send telemetry for unexpected errors
             try {
@@ -665,7 +1037,7 @@ class LicenseValidator
                 );
             } catch (Exception $telemetryError) {
                 // Telemetry failed, but don't hide original error
-                $result['warnings'][] = 'Failed to send telemetry: ' . $telemetryError->getMessage();
+                $result->addWarning('Failed to send telemetry: ' . $telemetryError->getMessage());
             }
             
             return $result;
@@ -713,7 +1085,7 @@ class LicenseValidator
                 break;
         }
 
-        return $this->httpClient->request('POST', '/v1/telemetry', $payload);
+        return $this->httpClient->request('POST', '/v1/send-telemetry', $payload);
     }
 
     /**
@@ -889,7 +1261,13 @@ class LicenseValidator
     private function validateLicenseKey(string $licenseKey): void
     {
         if (empty($licenseKey)) {
-            throw new InvalidArgumentException('License key cannot be empty');
+            throw new InvalidArgumentException(
+                'License key cannot be empty. ' .
+                'Please provide your license key (format: LIC-XXXX-XXXX-XXXX). ' .
+                'If you don\'t have a license key, please generate one from your admin dashboard ' .
+                'or contact support. ' .
+                'See: https://docs.getkeymanager.com/php-sdk#getting-started'
+            );
         }
     }
 
@@ -1136,9 +1514,113 @@ class LicenseValidator
             }
 
             // Send telemetry (fire-and-forget)
-            $this->httpClient->post('/v1/telemetry', $telemetryData);
+            $this->httpClient->post('/v1/send-telemetry', $telemetryData);
         } catch (\Exception $e) {
             // Silent fail for telemetry
+        }
+    }
+
+    /**
+     * Attempt Offline License Validation
+     * 
+     * Tries to validate a license offline using a .lic file on disk.
+     * Returns null if offline validation cannot be attempted (no file, missing publicKey, etc).
+     * Throws exception only if the file exists but validation fails (corruption, signature mismatch).
+     * 
+     * This implements the "offline-first" strategy: if the licensed application or framework
+     * previously downloaded a .lic file, use it immediately without network round-trip.
+     * 
+     * @param string $licenseKey License key to validate
+     * @param string $publicKey Product RSA public key for signature verification
+     * @param string $identifier Domain or hardware ID for binding verification
+     * @param array $options Optional parameters (licenseFilePath if different from config)
+     * 
+     * @return ?ValidationResultDto Validation result if offline validation succeeded; null if cannot attempt
+     * 
+     * @throws ValidationException If .lic file exists but is corrupted or signature invalid
+     * @throws SignatureException If signature verification fails
+     */
+    private function attemptOfflineValidation(
+        string $licenseKey,
+        string $publicKey,
+        string $identifier,
+        array $options = []
+    ): ?ValidationResultDto {
+        // Try to find .lic file path
+        $licFilePath = $options['licenseFilePath'] ?? $this->config->getLicenseFilePath();
+        
+        if (!$licFilePath) {
+            return null; // No license file path configured
+        }
+
+        // Check if .lic file exists for this license
+        $expectedPath = rtrim($licFilePath, '/') . '/' . hash('sha256', $licenseKey) . '.lic';
+        
+        if (!file_exists($expectedPath)) {
+            return null; // No .lic file available for offline validation
+        }
+
+        try {
+            // Read and parse the .lic file
+            $licContent = file_get_contents($expectedPath);
+            if ($licContent === false) {
+                return null; // Cannot read file, fall back to API
+            }
+
+            // Parse the encrypted license file
+            $licenseData = $this->parseLicenseFile($licContent, $publicKey);
+
+            // Verify the license key matches
+            if (($licenseData['license_key'] ?? $licenseData['key'] ?? null) !== $licenseKey) {
+                throw new ValidationException(
+                    'License key in offline file does not match request',
+                    'LICENSE_KEY_MISMATCH'
+                );
+            }
+
+            // Check expiry
+            if (isset($licenseData['expires_at'])) {
+                $expiresAt = strtotime($licenseData['expires_at']);
+                if ($expiresAt && time() > $expiresAt) {
+                    throw new ValidationException(
+                        'License in offline file has expired',
+                        'LICENSE_EXPIRED'
+                    );
+                }
+            }
+
+            // Check binding (if hardware_id or domain is specified in the license)
+            if (isset($licenseData['hardware_id']) && $licenseData['hardware_id'] !== $identifier) {
+                throw new ValidationException(
+                    'Hardware ID in offline file does not match identifier',
+                    'HARDWARE_BINDING_MISMATCH'
+                );
+            }
+
+            if (isset($licenseData['domain']) && $licenseData['domain'] !== $identifier) {
+                throw new ValidationException(
+                    'Domain in offline file does not match identifier',
+                    'DOMAIN_BINDING_MISMATCH'
+                );
+            }
+
+            // Offline validation successful - build response
+            return ValidationResultDto::fromResponse([
+                'code' => 200,
+                'success' => true,
+                'message' => 'Offline validation successful',
+                'data' => [
+                    'license' => $licenseData
+                ],
+                'licFileContent' => $licContent
+            ]);
+
+        } catch (ValidationException $e) {
+            // File exists but is invalid - this should fail, don't fall back
+            throw $e;
+        } catch (Exception $e) {
+            // Other errors during parsing - return null to fall back to API
+            return null;
         }
     }
 }

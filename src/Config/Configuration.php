@@ -26,12 +26,16 @@ class Configuration
     private bool $verifySignatures;
     private ?string $publicKey;
     private ?string $publicKeyFile;
+    private ?string $productPublicKey;
     private ?string $environment;
     private bool $cacheEnabled;
     private int $cacheTtl;
     private int $retryAttempts;
     private int $retryDelay;
     private ?string $productId;
+    private ?string $licenseKey;
+    private ?string $licenseFilePath;
+    private ?string $defaultIdentifier;
 
     /**
      * Create configuration from array
@@ -56,6 +60,15 @@ class Configuration
         $this->publicKeyFile = $config['publicKeyFile'] ?? null;
         $this->publicKey = $this->loadPublicKey();
         
+        // Product public key for offline license validation
+        if (!empty($config['productPublicKey'])) {
+            $this->productPublicKey = $config['productPublicKey'];
+        } elseif (!empty($config['productPublicKeyFile'])) {
+            $this->productPublicKey = $this->loadFileContent($config['productPublicKeyFile']);
+        } else {
+            $this->productPublicKey = null;
+        }
+        
         $this->environment = $config['environment'] ?? null;
         $this->cacheEnabled = filter_var($config['cacheEnabled'] ?? true, FILTER_VALIDATE_BOOLEAN);
         
@@ -69,6 +82,9 @@ class Configuration
         $this->retryDelay = max(0, $retryDelay); // Can be 0 (no delay)
         
         $this->productId = $config['productId'] ?? null;
+        $this->licenseKey = $config['licenseKey'] ?? null;
+        $this->licenseFilePath = $config['licenseFilePath'] ?? null;
+        $this->defaultIdentifier = $config['defaultIdentifier'] ?? null;
     }
 
     /**
@@ -82,25 +98,43 @@ class Configuration
         // Try to load from file first (preferred method)
         if (!empty($this->publicKeyFile)) {
             $filePath = $this->resolvePath($this->publicKeyFile);
-            
-            if (!file_exists($filePath)) {
-                throw new InvalidArgumentException("Public key file not found: {$this->publicKeyFile}");
-            }
-            
-            if (!is_readable($filePath)) {
-                throw new InvalidArgumentException("Public key file is not readable: {$this->publicKeyFile}");
-            }
-            
-            $content = file_get_contents($filePath);
-            if ($content === false) {
-                throw new InvalidArgumentException("Cannot read public key file: {$this->publicKeyFile}");
-            }
-            
-            return trim($content);
+            return $this->loadFileContent($filePath, 'Public key');
         }
         
         // Fall back to publicKey from config (deprecated)
         return null;
+    }
+
+    /**
+     * Load content from a file with error handling
+     * 
+     * @param string $filePath Path to file
+     * @param string $fileType File type for error messages
+     * @return string|null File content or null
+     * @throws InvalidArgumentException If file cannot be read
+     */
+    private function loadFileContent(string $filePath, string $fileType = 'File'): ?string
+    {
+        if (empty($filePath)) {
+            return null;
+        }
+        
+        $resolvedPath = $this->resolvePath($filePath);
+        
+        if (!file_exists($resolvedPath)) {
+            throw new InvalidArgumentException("{$fileType} file not found: {$filePath}");
+        }
+        
+        if (!is_readable($resolvedPath)) {
+            throw new InvalidArgumentException("{$fileType} file is not readable: {$filePath}");
+        }
+        
+        $content = file_get_contents($resolvedPath);
+        if ($content === false) {
+            throw new InvalidArgumentException("Cannot read {$fileType} file: {$filePath}");
+        }
+        
+        return trim($content);
     }
 
     /**
@@ -172,10 +206,14 @@ class Configuration
     public function getTimeout(): int { return $this->timeout; }
     public function shouldVerifySignatures(): bool { return $this->verifySignatures; }
     public function getPublicKey(): ?string { return $this->publicKey; }
+    public function getProductPublicKey(): ?string { return $this->productPublicKey; }
     public function getEnvironment(): ?string { return $this->environment; }
     public function isCacheEnabled(): bool { return $this->cacheEnabled; }
     public function getCacheTtl(): int { return $this->cacheTtl; }
     public function getRetryAttempts(): int { return $this->retryAttempts; }
     public function getRetryDelay(): int { return $this->retryDelay; }
     public function getProductId(): ?string { return $this->productId; }
+    public function getLicenseKey(): ?string { return $this->licenseKey; }
+    public function getLicenseFilePath(): ?string { return $this->licenseFilePath; }
+    public function getDefaultIdentifier(): ?string { return $this->defaultIdentifier; }
 }

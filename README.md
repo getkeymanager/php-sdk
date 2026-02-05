@@ -1,7 +1,7 @@
 # KeyManager - PHP SDK
 
 
-**Version: 2.0.0** - Now with complete API coverage!
+**Version: 3.0.0** - Identifier-first architecture with offline-first validation!
 
 ## Features
 
@@ -34,6 +34,16 @@
 - ✅ **Offline .lic parsing**: `parseLicenseFile()` (Base64 decode → 256-byte chunks → RSA PKCS1 decrypt → JSON)
 - ✅ **License/key sync**: `syncLicenseAndKey()` with atomic file updates + telemetry
 - ✅ **Validation timers**: `isCheckIntervalPast()` and `isForceValidationPast()` (fail-safe true on error)
+
+### New in v3.0.0 - BREAKING CHANGES
+- ✅ **Mandatory Identifier Parameter** - All validation/activation methods now require `$identifier` (domain or HWID)
+- ✅ **Configuration Inheritance** - Set `productPublicKey`, `licenseKey`, `licenseFilePath`, `defaultIdentifier` once, reuse everywhere
+- ✅ **Offline-First Validation** - Try cached .lic file first, fallback to API with `ValidationType` constants
+- ✅ **Type-Safe DTOs** - `ValidationResultDto`, `ActivationResultDto`, `SyncResultDto` with typed accessors
+- ✅ **Constants & Enums** - `ValidationType`, `IdentifierType`, `OptionKeys` for predictable behavior
+- ✅ **Helper Methods** - `generateIdentifier()`, `getIdentifierOrGenerate()`, `resolvePublicKey()`, `canValidateOffline()`
+- ✅ **Enhanced Error Messages** - Actionable, context-aware errors with documentation links
+- ⚠️ **⚠️ MIGRATION REQUIRED:** See [Migration Guide v2→v3](#migration-guide-v2-to-v3) below
 
 #### Offline .lic Parsing (LicenseValidator)
 ```php
@@ -97,15 +107,27 @@ $client = new LicenseClient([
 ### Validate a License (Online)
 
 ```php
+use GetKeyManager\SDK\Constants\ValidationType;
+
 try {
+    // Basic validation with auto-generated identifier
     $result = $client->validateLicense('XXXXX-XXXXX-XXXXX-XXXXX');
     
-    if ($result['valid']) {
+    // Or specify identifier explicitly
+    $result = $client->validateLicense(
+        'XXXXX-XXXXX-XXXXX-XXXXX',
+        'example.com',  // Domain identifier
+        null,           // Use config's public key
+        ValidationType::OFFLINE_FIRST,  // Try cache first
+        []              // Options
+    );
+    
+    if ($result['success']) {
         echo "License is valid!\n";
         echo "Status: " . $result['license']['status'] . "\n";
         echo "Expires: " . ($result['license']['expires_at'] ?? 'Never') . "\n";
     } else {
-        echo "License is invalid\n";
+        echo "License is invalid: " . $result['message'] . "\n";
     }
 } catch (LicenseException $e) {
     echo "Error: " . $e->getMessage() . "\n";
@@ -116,19 +138,26 @@ try {
 
 ```php
 try {
-    $hardwareId = $client->generateHardwareId();
-    
-    $result = $client->activateLicense('XXXXX-XXXXX-XXXXX-XXXXX', [
-        'hardwareId' => $hardwareId,
-        'metadata' => [
-            'hostname' => gethostname(),
-            'application_version' => '1.0.0'
+    // Activation requires identifier (domain or hardware ID)
+    $result = $client->activateLicense(
+        'XXXXX-XXXXX-XXXXX-XXXXX',
+        'workstation-01',  // Identifier: domain or HWID
+        null,              // Use config's public key
+        [                  // Additional options
+            'idempotency_key' => 'request-uuid-here',
+            'os' => 'Linux',
+            'product_version' => '1.0.0'
         ]
-    ]);
+    );
     
     if ($result['success']) {
         echo "License activated successfully!\n";
-        echo "Activation ID: " . $result['activation']['id'] . "\n";
+        echo "Activation ID: " . $result['activation_id'] . "\n";
+        
+        // .lic file generated on server
+        if (isset($result['lic_file_content'])) {
+            file_put_contents('/app/license.lic', $result['lic_file_content']);
+        }
     }
 } catch (LicenseException $e) {
     echo "Activation failed: " . $e->getMessage() . "\n";
@@ -139,15 +168,24 @@ try {
 
 ```php
 try {
-    $result = $client->deactivateLicense('XXXXX-XXXXX-XXXXX-XXXXX', [
-        'hardwareId' => $hardwareId
-    ]);
+    // Identifier MUST match the activation being deactivated
+    $result = $client->deactivateLicense(
+        'XXXXX-XXXXX-XXXXX-XXXXX',
+        'workstation-01'  // Must match activation identifier
+    );
     
     if ($result['success']) {
         echo "License deactivated successfully!\n";
+        echo "Activation ID: " . $result['activation_id'] . "\n";
+    } else {
+        echo "Deactivation failed: " . $result['message'] . "\n";
+        // Check if activation not found
+        if ($result['error'] === 'activation_not_found') {
+            echo "Tip: Ensure identifier matches the activation being deactivated\n";
+        }
     }
 } catch (LicenseException $e) {
-    echo "Deactivation failed: " . $e->getMessage() . "\n";
+    echo "Error: " . $e->getMessage() . "\n";
 }
 ```
 
