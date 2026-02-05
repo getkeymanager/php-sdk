@@ -24,20 +24,29 @@ class LicenseException extends Exception
      * Create a LicenseException
      * 
      * @param string $message Error message
-     * @param int $code HTTP status code or error code
+     * @param int $code Exception code (typically HTTP status code from transport layer)
      * @param string|null $errorCode Specific error code (e.g., 'LICENSE_EXPIRED')
      * @param array $errorDetails Additional error details
      * @param Throwable|null $previous Previous exception
-     * @param int|null $apiResponseCode API response code from server (e.g., 205 for LICENSE_EXPIRED)
+     * @param int|null $apiResponseCode API response code from server (e.g., ApiResponseCode::LICENSE_EXPIRED = 205)
      */
     public function __construct(
         string $message = "",
         int $code = 0,
-        ?string $errorCode = null,
+        string|Exception|Throwable|null $errorCode = null,
         array $errorDetails = [],
         ?Throwable $previous = null,
         ?int $apiResponseCode = null
     ) {
+        if ($errorCode instanceof Throwable) {
+            $previous = $previous ?? $errorCode;
+            $errorCode = null;
+        }
+
+        if ($errorCode instanceof Exception) {
+            $previous = $previous ?? $errorCode;
+            $errorCode = null;
+        }
         parent::__construct($message, $code, $previous);
         $this->errorCode = $errorCode;
         $this->errorDetails = $errorDetails;
@@ -57,7 +66,7 @@ class LicenseException extends Exception
     /**
      * Get the API response code from the server
      * 
-     * @return int|null The numeric API response code (e.g., 205 for LICENSE_EXPIRED)
+     * @return int|null The numeric API response code (e.g., ApiResponseCode::LICENSE_EXPIRED = 205)
      */
     public function getApiCode(): ?int
     {

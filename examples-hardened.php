@@ -359,7 +359,7 @@ function handleApiResponseCodes(LicenseClient $client): void
         $apiCodeName = $e->getApiCodeName();
         
         echo "API Error Occurred:\n";
-        echo "  HTTP Status: " . $e->getCode() . "\n";
+        echo "  Transport Status: " . $e->getCode() . "\n";  // HTTP status from transport layer
         echo "  API Response Code: " . $apiCode . "\n";
         echo "  Code Name: " . $apiCodeName . "\n";
         echo "  Message: " . $e->getMessage() . "\n";
@@ -559,8 +559,8 @@ function comprehensiveErrorHandling(LicenseClient $client, string $licenseKey): 
         $codeName = $e->getApiCodeName();
         
         echo "✗ License Error\n";
-        echo "  HTTP Code: " . $e->getCode() . "\n";
-        echo "  API Code: {$apiCode} ({$codeName})\n";
+        echo "  Transport Status: " . $e->getCode() . "\n";  // HTTP status from transport layer
+        echo "  API Response Code: {$apiCode} ({$codeName})\n";
         echo "  Message: " . $e->getMessage() . "\n";
         
         // Log full exception details for debugging

@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace GetKeyManager\SDK;
 
 use GetKeyManager\SDK\ApiResponseCode;
+use GetKeyManager\SDK\Exceptions\ActivationException;
+use GetKeyManager\SDK\Exceptions\ExpiredException;
+use GetKeyManager\SDK\Exceptions\LicenseException;
+use GetKeyManager\SDK\Exceptions\SignatureException;
+use GetKeyManager\SDK\Exceptions\SuspendedException;
+use GetKeyManager\SDK\Exceptions\ValidationException;
 
 /**
  * StateResolver - Resolves EntitlementState from API Responses

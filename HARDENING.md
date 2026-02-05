@@ -289,11 +289,11 @@ try {
     $result = $client->validateLicense($licenseKey);
 } catch (LicenseException $e) {
     // Enhanced exception with API response code
-    echo "HTTP Status: " . $e->getCode() . "\n";          // 400
-    echo "Error Code: " . $e->getErrorCode() . "\n";      // "LICENSE_EXPIRED"
-    echo "API Code: " . $e->getApiCode() . "\n";          // 205
-    echo "API Code Name: " . $e->getApiCodeName() . "\n"; // "LICENSE_EXPIRED"
-    echo "Message: " . $e->getMessage() . "\n";           // "License key expired"
+    echo "Transport Status: " . $e->getCode() . "\n";        // HTTP status (e.g., 400, 500)
+    echo "Error Code: " . $e->getErrorCode() . "\n";         // "LICENSE_EXPIRED"
+    echo "API Response Code: " . $e->getApiCode() . "\n";    // ApiResponseCode::LICENSE_EXPIRED = 205
+    echo "API Code Name: " . $e->getApiCodeName() . "\n";    // "LICENSE_EXPIRED"
+    echo "Message: " . $e->getMessage() . "\n";              // "License key expired"
     
     // Full exception info
     $info = $e->toArray();

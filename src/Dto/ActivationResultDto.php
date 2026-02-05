@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace GetKeyManager\SDK\Dto;
 
+use GetKeyManager\SDK\ApiResponseCode;
+
 /**
  * Activation Result DTO
  * 
@@ -14,14 +16,31 @@ namespace GetKeyManager\SDK\Dto;
  */
 class ActivationResultDto
 {
+    /** @var int API response code (from ApiResponseCode constants, e.g., LICENSE_ACTIVATED = 300) */
     public int $code;
+    
+    /** @var bool Whether the operation was successful */
     public bool $success;
+    
+    /** @var string|null Response message */
     public ?string $message = null;
+    
+    /** @var string|null Activation ID */
     public ?string $activation_id = null;
+    
+    /** @var string|null Hardware ID or domain identifier */
     public ?string $identifier = null;
+    
+    /** @var string|null Activation timestamp */
     public ?string $activated_at = null;
+    
+    /** @var LicenseDataDto|null Updated license data */
     public ?LicenseDataDto $license = null;
+    
+    /** @var string|null Base64-encoded .lic file content */
     public ?string $licFileContent = null;
+    
+    /** @var array|null Additional response data */
     public ?array $data = null;
 
     /**
@@ -35,7 +54,7 @@ class ActivationResultDto
         $dto = new self();
         
         $dto->code = $response['code'] ?? $response['status_code'] ?? 0;
-        $dto->success = $response['success'] ?? ($response['code'] === 200 || $response['code'] === 201);
+        $dto->success = $response['success'] ?? ApiResponseCode::isSuccess($dto->code);
         $dto->message = $response['message'] ?? null;
         
         // Parse activation data
@@ -89,7 +108,7 @@ class ActivationResultDto
      */
     public function isSuccess(): bool
     {
-        return $this->success && in_array($this->code, [200, 201], true);
+        return $this->success && ApiResponseCode::isSuccess($this->code);
     }
 
     /**

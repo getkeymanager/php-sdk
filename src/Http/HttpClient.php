@@ -209,8 +209,8 @@ class HttpClient
     /**
      * Handle error response from API
      * 
-     * @param int $httpCode HTTP status code
-     * @param array $responseData Response data
+     * @param int $httpCode HTTP transport status code (e.g., 400, 500) - not ApiResponseCode
+     * @param array $responseData Response data containing ApiResponseCode
      * @throws LicenseException
      */
     private function handleErrorResponse(int $httpCode, array $responseData): void

@@ -4,21 +4,34 @@ declare(strict_types=1);
 
 namespace GetKeyManager\SDK\Dto;
 
+use GetKeyManager\SDK\ApiResponseCode;
+
 /**
  * Validation Result DTO
  * 
  * Represents the result of a license validation operation.
- * Contains both the HTTP response code and parsed license data.
+ * Contains the API response code and parsed license data.
  * 
  * @package GetKeyManager\SDK\Dto
  */
 class ValidationResultDto
 {
+    /** @var int API response code (from ApiResponseCode constants, e.g., VALID_LICENSE_KEY = 200) */
     public int $code;
+    
+    /** @var bool Whether the operation was successful */
     public bool $success;
+    
+    /** @var string|null Response message */
     public ?string $message = null;
+    
+    /** @var LicenseDataDto|null Parsed license data */
     public ?LicenseDataDto $license = null;
+    
+    /** @var string|null Base64-encoded .lic file content */
     public ?string $licFileContent = null;
+    
+    /** @var array|null Additional response data */
     public ?array $data = null;
 
     /**
@@ -32,7 +45,7 @@ class ValidationResultDto
         $dto = new self();
         
         $dto->code = $response['code'] ?? $response['status_code'] ?? 0;
-        $dto->success = $response['success'] ?? ($response['code'] === 200);
+        $dto->success = $response['success'] ?? ApiResponseCode::isSuccess($dto->code);
         $dto->message = $response['message'] ?? null;
         
         // Parse license data if present
@@ -76,13 +89,13 @@ class ValidationResultDto
      */
     public function isSuccess(): bool
     {
-        return $this->success && $this->code === 200;
+        return $this->success && ApiResponseCode::isSuccess($this->code);
     }
 
     /**
-     * Get HTTP status code
+     * Get API response code
      * 
-     * @return int Status code
+     * @return int Response code
      */
     public function getCode(): int
     {

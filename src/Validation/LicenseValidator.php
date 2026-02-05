@@ -11,6 +11,7 @@ use GetKeyManager\SDK\StateStore;
 use GetKeyManager\SDK\StateResolver;
 use GetKeyManager\SDK\SignatureVerifier;
 use GetKeyManager\SDK\LicenseState;
+use GetKeyManager\SDK\ApiResponseCode;
 use GetKeyManager\SDK\Dto\LicenseDataDto;
 use GetKeyManager\SDK\Dto\ValidationResultDto;
 use GetKeyManager\SDK\Dto\ActivationResultDto;
@@ -1606,7 +1607,7 @@ class LicenseValidator
 
             // Offline validation successful - build response
             return ValidationResultDto::fromResponse([
-                'code' => 200,
+                'code' => ApiResponseCode::VALID_LICENSE_KEY,
                 'success' => true,
                 'message' => 'Offline validation successful',
                 'data' => [
